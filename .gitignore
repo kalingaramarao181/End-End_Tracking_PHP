@@ -1,0 +1,5 @@
+config/openai.php
+config/mail.php
+config/services.php
+config/jwt.php
+config/mail.local.example.php
