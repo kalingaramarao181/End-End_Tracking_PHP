@@ -134,20 +134,6 @@ function getEmployeeAttendance($id) {
     echo json_encode(fetchAttendance($id,$start,$end,$_GET['page']??1,$_GET['limit']??20));
 }
 
-function setEmployeeAttendanceDate($id, $date) {
-    $input=json_decode(file_get_contents('php://input'),true)?:[];
-    $present=filter_var($input['present']??true,FILTER_VALIDATE_BOOLEAN,FILTER_NULL_ON_FAILURE);
-    if($present===null){
-        http_response_code(422);echo json_encode(['success'=>false,'message'=>'present must be true or false.']);return;
-    }
-    if($date>date('Y-m-d')){
-        http_response_code(422);echo json_encode(['success'=>false,'message'=>'Future attendance cannot be added.']);return;
-    }
-    $result=saveAdminAttendanceDate($id,$date,$present);
-    http_response_code($result['success']?200:(!empty($result['not_found'])?404:409));
-    echo json_encode($result);
-}
-
 // ➕ ADD Employee
 function createEmployee() {
     global $conn;

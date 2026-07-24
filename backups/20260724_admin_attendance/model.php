@@ -220,7 +220,7 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
     global $conn;
     $page=max(1,(int)$page);$limit=min(100,max(1,(int)$limit));$offset=($page-1)*$limit;
     $hoursExpression="CASE WHEN time_out<>'00:00:00' AND time_out>time_in
-        THEN TIMESTAMPDIFF(SECOND,time_in,time_out)/3600 ELSE 8 END";
+        THEN TIMESTAMPDIFF(SECOND,time_in,time_out)/3600 ELSE NULL END";
     $summaryStmt=$conn->prepare("SELECT COUNT(DISTINCT date) present_days,
         SUM(status=1) on_time_days, SUM(status=0) late_days,
         ROUND(AVG($hoursExpression),2) average_hours,
@@ -233,52 +233,14 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
     $countStmt=$conn->prepare('SELECT COUNT(*) total FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ?');
     $countStmt->bind_param('iss',$employeeId,$startDate,$endDate);$countStmt->execute();
     $total=(int)$countStmt->get_result()->fetch_assoc()['total'];
-    $stmt=$conn->prepare("SELECT id,date,time_in,time_out,status,admin_created,
+    $stmt=$conn->prepare("SELECT id,date,time_in,time_out,status,
         ROUND($hoursExpression,2) hours
         FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ? ORDER BY date DESC,id DESC LIMIT ? OFFSET ?");
     $stmt->bind_param('issii',$employeeId,$startDate,$endDate,$limit,$offset);$stmt->execute();
-    $records=[];$result=$stmt->get_result();while($row=$result->fetch_assoc()){$row['id']=(int)$row['id'];$row['status']=(int)$row['status'];$row['admin_created']=(int)$row['admin_created'];$records[]=$row;}
+    $records=[];$result=$stmt->get_result();while($row=$result->fetch_assoc()){$row['id']=(int)$row['id'];$row['status']=(int)$row['status'];$records[]=$row;}
     $trendStmt=$conn->prepare("SELECT date,ROUND(SUM($hoursExpression),2) hours,
         MAX(status) status FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date");
     $trendStmt->bind_param('iss',$employeeId,$startDate,$endDate);$trendStmt->execute();
     $trend=[];$result=$trendStmt->get_result();while($row=$result->fetch_assoc())$trend[]=$row;
-    $calendarStmt=$conn->prepare('SELECT date,MAX(admin_created) admin_created FROM attendance
-        WHERE employee_id=? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date');
-    $calendarStmt->bind_param('iss',$employeeId,$startDate,$endDate);$calendarStmt->execute();
-    $calendar=[];$result=$calendarStmt->get_result();while($row=$result->fetch_assoc()){$row['admin_created']=(int)$row['admin_created'];$calendar[]=$row;}
-    return ['success'=>true,'summary'=>$summary,'trend'=>$trend,'calendar'=>$calendar,'data'=>$records,'total'=>$total,'page'=>$page,'limit'=>$limit];
-}
-
-function saveAdminAttendanceDate($employeeId, $date, $present) {
-    global $conn;
-    $conn->begin_transaction();
-    try {
-        $stmt=$conn->prepare('SELECT id FROM employees WHERE id=? FOR UPDATE');
-        $stmt->bind_param('i',$employeeId);$stmt->execute();
-        if(!$stmt->get_result()->fetch_assoc())throw new RuntimeException('Employee not found.');
-
-        $stmt=$conn->prepare('SELECT id,admin_created FROM attendance WHERE employee_id=? AND date=? FOR UPDATE');
-        $stmt->bind_param('is',$employeeId,$date);$stmt->execute();
-        $records=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-        if($present){
-            if($records){$conn->commit();return ['success'=>true,'message'=>'Attendance is already recorded for this date.'];}
-            $timeIn='09:00:00';$timeOut='17:00:00';$status=1;$hours=8.0;$adminCreated=1;
-            $stmt=$conn->prepare('INSERT INTO attendance (employee_id,date,time_in,time_out,status,num_hr,admin_created) VALUES (?,?,?,?,?,?,?)');
-            $stmt->bind_param('isssidi',$employeeId,$date,$timeIn,$timeOut,$status,$hours,$adminCreated);
-            if(!$stmt->execute())throw new RuntimeException('Attendance could not be added.');
-            $message='Attendance added for '.$date.'.';
-        }else{
-            if(!$records){$conn->commit();return ['success'=>true,'message'=>'No attendance exists for this date.'];}
-            foreach($records as $record)if((int)$record['admin_created']!==1)throw new DomainException('Clocked attendance cannot be removed from the calendar.');
-            $stmt=$conn->prepare('DELETE FROM attendance WHERE employee_id=? AND date=? AND admin_created=1');
-            $stmt->bind_param('is',$employeeId,$date);
-            if(!$stmt->execute())throw new RuntimeException('Attendance could not be removed.');
-            $message='Admin attendance removed for '.$date.'.';
-        }
-        $conn->commit();
-        return ['success'=>true,'message'=>$message];
-    }catch(Throwable $error){
-        $conn->rollback();
-        return ['success'=>false,'not_found'=>$error->getMessage()==='Employee not found.','message'=>$error->getMessage()];
-    }
+    return ['success'=>true,'summary'=>$summary,'trend'=>$trend,'data'=>$records,'total'=>$total,'page'=>$page,'limit'=>$limit];
 }

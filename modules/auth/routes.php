@@ -21,6 +21,12 @@ if ($method === 'POST' && $route === 'auth/login') {
     $authController->login();
     exit;
 }
+if ($method === 'GET' && in_array($route,['auth/me','auth/permissions'],true)) {
+    require_once __DIR__ . '/../../middleware/auth.php';
+    authenticate();
+    $authController->me();
+    exit;
+}
 
 /*
 |--------------------------------------------------------------------------

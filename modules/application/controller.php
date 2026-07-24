@@ -84,6 +84,7 @@ class ApplicationController
     public function create()
     {
         require_once __DIR__ . '/../../middleware/auth.php';
+        require_once __DIR__ . '/../../middleware/role.php';
 
         // Since files are uploaded, use $_POST
         $data = $_POST;
@@ -163,7 +164,7 @@ class ApplicationController
     | Bench Sales / Recruiters / Others:
     |   - Can view only their own applications.
     */
-    public function index($forcedPositionId = null)
+    public function index($forcedPositionId = null, $resourceName = 'bench_sales')
     {
         require_once __DIR__ . '/../../middleware/auth.php';
         require_once __DIR__ . '/../../config/db.php';
@@ -228,11 +229,7 @@ class ApplicationController
         }
 
         $user = $userResult->fetch_assoc();
-        $positionName = strtolower(trim($user['position_name'] ?? ''));
-
-        $isAdmin =
-            $positionName === 'admin' ||
-            $positionName === 'super admin';
+        $dataScope = permissionScope($resourceName);
 
         /*
         |--------------------------------------------------------------------------
@@ -244,16 +241,17 @@ class ApplicationController
 
         if ($forcedPositionId !== null) {
             $positionIdFilter = (int)$forcedPositionId;
-        } elseif ($isAdmin) {
+            if ($dataScope !== 'ALL') {
+                $employeeIdFilter = $loggedInUserId;
+            }
+        } elseif ($dataScope === 'ALL') {
             // Admin can optionally filter by position
             if ($positionId) {
                 $positionIdFilter = $positionId;
             }
+        } else {
+            $employeeIdFilter = $loggedInUserId;
         }
-        // else {
-        //     // Non-admin users only see their own applications
-        //     $employeeIdFilter = $loggedInUserId;
-        // }
 
         /*
         |--------------------------------------------------------------------------
@@ -281,7 +279,7 @@ class ApplicationController
     | GET /api/application/{id}
     |--------------------------------------------------------------------------
     */
-    public function show($id, $expectedPositionId = null)
+    public function show($id, $expectedPositionId = null, $resourceName = 'bench_sales')
     {
         $result = $this->applicationModel->getApplicationById($id);
 
@@ -291,6 +289,19 @@ class ApplicationController
                 : 500;
 
             $this->jsonResponse($statusCode, $result);
+        }
+
+        $authUser = authUser();
+        require_once __DIR__ . '/../../middleware/role.php';
+        $isAdmin = permissionScope($resourceName) === 'ALL';
+        if (
+            !$isAdmin
+            && (!$authUser || (int)($result['data']['employee_id'] ?? 0) !== (int)$authUser['id'])
+        ) {
+            $this->jsonResponse(404, [
+                'success' => false,
+                'message' => 'Application not found or you do not have access to it.'
+            ]);
         }
 
         if ($expectedPositionId !== null && (int)($result['data']['position_id'] ?? 0) !== (int)$expectedPositionId) {

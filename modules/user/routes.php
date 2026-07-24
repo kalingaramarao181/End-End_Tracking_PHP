@@ -23,6 +23,10 @@ if (strpos($requestUri, $basePath) === 0) {
 | POST http://localhost/api/user/register
 */
 if ($method === 'POST' && $requestUri === '/user/register') {
+    require_once __DIR__ . '/../../middleware/auth.php';
+    require_once __DIR__ . '/../../middleware/role.php';
+    authenticate();
+    requirePermission('users', 'can_create');
     $userController->register();
     exit;
 }

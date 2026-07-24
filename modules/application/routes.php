@@ -163,6 +163,7 @@ if (
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
+    requirePermission('dashboard', 'can_view');
 
     $applicationController->dashboardSummary();
     exit;
@@ -202,6 +203,7 @@ if (
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
+    requirePermission('dashboard', 'can_view');
 
     $applicationController->recentActivities();
 

@@ -53,7 +53,7 @@ if ($method === 'GET' && $requestUri === '/recruiters/list') {
     authenticate();
     requirePermission('recruiters', 'can_view');
 
-    $applicationController->index(4);
+    $applicationController->index(4, 'recruiters');
     exit;
 }
 
@@ -74,7 +74,7 @@ if (
     authenticate();
     requirePermission('recruiters', 'can_view');
 
-    $applicationController->show((int)$matches[1], 4);
+    $applicationController->show((int)$matches[1], 4, 'recruiters');
     exit;
 }
 

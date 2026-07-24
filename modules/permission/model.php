@@ -31,7 +31,16 @@ class PermissionModel
                 COALESCE(p.can_edit, 0) AS can_edit,
                 COALESCE(p.can_delete, 0) AS can_delete,
                 COALESCE(p.can_export, 0) AS can_export,
-                COALESCE(p.can_approve, 0) AS can_approve
+                COALESCE(p.can_import, 0) AS can_import,
+                COALESCE(p.can_upload, 0) AS can_upload,
+                COALESCE(p.can_download, 0) AS can_download,
+                COALESCE(p.can_approve, 0) AS can_approve,
+                COALESCE(p.can_reject, 0) AS can_reject,
+                COALESCE(p.can_assign, 0) AS can_assign,
+                COALESCE(p.can_manage, 0) AS can_manage,
+                COALESCE(p.can_print, 0) AS can_print,
+                COALESCE(p.can_share, 0) AS can_share,
+                COALESCE(p.data_scope, 'OWN') AS data_scope
 
             FROM resources r
             LEFT JOIN permissions p
@@ -89,26 +98,12 @@ class PermissionModel
         $this->conn->begin_transaction();
 
         try {
-            $sql = "
-                INSERT INTO permissions (
-                    position_id,
-                    resource_id,
-                    can_view,
-                    can_create,
-                    can_edit,
-                    can_delete,
-                    can_export,
-                    can_approve
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    can_view = VALUES(can_view),
-                    can_create = VALUES(can_create),
-                    can_edit = VALUES(can_edit),
-                    can_delete = VALUES(can_delete),
-                    can_export = VALUES(can_export),
-                    can_approve = VALUES(can_approve)
-            ";
+            $actions=['view','create','edit','delete','export','import','upload','download','approve','reject','assign','manage','print','share'];
+            $actionColumns=array_map(fn($a)=>"can_$a",$actions);
+            $sql="INSERT INTO permissions(position_id,resource_id,".implode(',',$actionColumns).",data_scope)
+                VALUES (".implode(',',array_fill(0,17,'?')).")
+                ON DUPLICATE KEY UPDATE ".implode(',',array_map(fn($c)=>"$c=VALUES($c)",$actionColumns)).",
+                data_scope=VALUES(data_scope)";
 
             $stmt = $this->conn->prepare($sql);
 
@@ -118,24 +113,11 @@ class PermissionModel
 
             foreach ($permissions as $row) {
                 $resourceId = (int)$row['resource_id'];
-                $canView = (int)($row['can_view'] ?? 0);
-                $canCreate = (int)($row['can_create'] ?? 0);
-                $canEdit = (int)($row['can_edit'] ?? 0);
-                $canDelete = (int)($row['can_delete'] ?? 0);
-                $canExport = (int)($row['can_export'] ?? 0);
-                $canApprove = (int)($row['can_approve'] ?? 0);
-
-                $stmt->bind_param(
-                    "iiiiiiii",
-                    $positionId,
-                    $resourceId,
-                    $canView,
-                    $canCreate,
-                    $canEdit,
-                    $canDelete,
-                    $canExport,
-                    $canApprove
-                );
+                $values=[$positionId,$resourceId];
+                foreach($actions as $action)$values[]=(int)($row["can_$action"]??0);
+                $scope=in_array(($row['data_scope']??'OWN'),['OWN','TEAM','DEPARTMENT','OFFICE','ALL'],true)?$row['data_scope']:'OWN';
+                $values[]=$scope;
+                $stmt->bind_param(str_repeat('i',16).'s',...$values);
 
                 if (!$stmt->execute()) {
                     throw new Exception($stmt->error);

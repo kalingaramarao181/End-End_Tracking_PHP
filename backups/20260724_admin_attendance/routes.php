@@ -42,16 +42,6 @@ if ($method === 'GET' && preg_match('#^employees/(\d+)/attendance$#', $path, $ma
     }
     getEmployeeAttendance($employeeId);exit;
 }
-if ($method === 'PUT' && preg_match('#^employees/(\d+)/attendance/(\d{4}-\d{2}-\d{2})$#', $path, $matches)) {
-    requirePermission('attendance','can_edit');
-    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') {
-        http_response_code(403);
-        echo json_encode(['success'=>false,'message'=>'Administrator access required.']);
-        exit;
-    }
-    setEmployeeAttendanceDate((int)$matches[1], $matches[2]);
-    exit;
-}
 if ($method === 'GET' && preg_match('#^employees/(\d+)$#', $path, $matches)) {
     $employeeId=(int)$matches[1];
     $own=fetchEmployeeForUser((int)$user['id']);

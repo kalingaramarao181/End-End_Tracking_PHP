@@ -73,14 +73,17 @@ function authenticate()
     // Load user from database
     $stmt = $conn->prepare("
         SELECT
-            id,
-            employee_id,
-            nick_name,
-            email,
-            position_id,
-            status
-        FROM users
-        WHERE id = ?
+            u.id,
+            u.employee_id,
+            u.nick_name,
+            u.email,
+            u.position_id,
+            u.status,
+            p.status AS position_status,
+            p.position_name
+        FROM users u
+        LEFT JOIN positions p ON p.id = u.position_id
+        WHERE u.id = ?
         LIMIT 1
     ");
 
@@ -100,6 +103,11 @@ function authenticate()
     if ($user['status'] !== 'Active') {
         http_response_code(403);
         echo json_encode(['error' => 'User is inactive']);
+        exit;
+    }
+    if ($user['position_status'] !== 'Active') {
+        http_response_code(403);
+        echo json_encode(['error' => 'Position is inactive']);
         exit;
     }
 

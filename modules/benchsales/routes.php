@@ -52,7 +52,7 @@ if ($method === 'GET' && $requestUri === '/benchsales/list') {
     authenticate();
     requirePermission('bench_sales', 'can_view');
 
-    $applicationController->index();
+    $applicationController->index(3, 'bench_sales');
     exit;
 }
 
@@ -73,7 +73,7 @@ if (
     authenticate();
     requirePermission('bench_sales', 'can_view');
 
-    $applicationController->show((int)$matches[1]);
+    $applicationController->show((int)$matches[1], 3, 'bench_sales');
     exit;
 }
 
@@ -128,6 +128,7 @@ if (
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
+    requirePermission('bench_sales', 'can_view');
 
     $applicationController->performanceDashboard();
     exit;

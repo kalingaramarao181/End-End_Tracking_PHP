@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 |--------------------------------------------------------------------------
 | Example:
 | http://localhost/api/auth/login
+
 | REQUEST_URI = /api/auth/login
 */
 $request = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -143,6 +144,20 @@ elseif (strpos($request, '/benchsales') === 0) {
 // ---------------------------------------------------------------------
 elseif (strpos($request, '/application') === 0) {
     require_once __DIR__ . '/modules/application/routes.php';
+    exit;
+}
+
+// ---------------------------------------------------------------------
+// DASHBOARD DATA TABLES
+// URL: GET /dashboard/{submissions|active-candidates|interviews|placements}
+// ---------------------------------------------------------------------
+elseif (strpos($request, '/dashboard') === 0) {
+    require_once __DIR__ . '/modules/dashboard/routes.php';
+    exit;
+}
+
+elseif (strpos($request, '/employees') === 0) {
+    require_once __DIR__ . '/modules/employee/routes.php';
     exit;
 }
 

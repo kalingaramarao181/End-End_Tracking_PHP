@@ -84,6 +84,7 @@ class PermissionController
             }
         }
 
+        $before=$this->permissionModel->getPermissionsByPosition($positionId);
         $result = $this->permissionModel->savePermissionsByPosition(
             $positionId,
             $data
@@ -92,6 +93,8 @@ class PermissionController
         if (!$result['success']) {
             $this->jsonResponse(500, $result);
         }
+        require_once __DIR__ . '/../../middleware/audit.php';
+        auditLog('permissions','UPDATE',(string)$positionId,$before['data']??null,$data);
 
         $this->jsonResponse(200, $result);
     }

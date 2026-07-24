@@ -40,12 +40,12 @@ class UserController
 
         // Required fields validation
         $requiredFields = [
-            'employee_id',
             'nick_name',
             'email',
             'password',
             'position_id'
         ];
+        $data['employee_id'] = 0;
 
         foreach ($requiredFields as $field) {
             if (!isset($data[$field]) || $data[$field] === '') {
@@ -101,11 +101,11 @@ class UserController
 
         // Required fields validation
         $requiredFields = [
-            'employee_id',
             'nick_name',
             'email',
             'position_id'
         ];
+        $data['employee_id'] = $existingUser['employee_id'] ?? 0;
 
         foreach ($requiredFields as $field) {
             if (!isset($data[$field]) || $data[$field] === '') {
