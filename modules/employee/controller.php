@@ -148,6 +148,63 @@ function setEmployeeAttendanceDate($id, $date) {
     echo json_encode($result);
 }
 
+function attendanceToday($user) {
+    $employee=fetchEmployeeForUser((int)$user['id']);
+    if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
+    echo json_encode(getTodayAttendanceState((int)$employee['id']));
+}
+
+function attendanceClock($user, $action) {
+    $input=json_decode(file_get_contents('php://input'),true)?:[];
+    $employee=fetchEmployeeForUser((int)$user['id']);
+    if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
+    $confirmed=strtoupper(trim((string)($input['employee_id']??'')));
+    if($confirmed!==strtoupper((string)$employee['employee_id'])){
+        http_response_code(422);echo json_encode(['success'=>false,'message'=>'Employee ID does not match your profile.']);return;
+    }
+    $result=clockAttendance((int)$employee['id'],(int)$user['id'],$action);
+    http_response_code($result['success']?200:409);echo json_encode($result);
+}
+
+function listHolidays() {
+    $year=max(2000,min(2100,(int)($_GET['year']??date('Y'))));
+    echo json_encode(['success'=>true,'data'=>fetchHolidays($year)]);
+}
+function saveHoliday($user) {
+    $result=upsertHoliday(json_decode(file_get_contents('php://input'),true)?:[],(int)$user['id']);
+    http_response_code($result['success']?201:422);echo json_encode($result);
+}
+function removeHoliday($id) {
+    $result=deleteHoliday($id);http_response_code($result['success']?200:404);echo json_encode($result);
+}
+function listLeaves($user,$all) {
+    $employee=$all?null:fetchEmployeeForUser((int)$user['id']);
+    if(!$all&&!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
+    echo json_encode(['success'=>true,'data'=>fetchLeaves($employee?(int)$employee['id']:null,$_GET)]);
+}
+function createLeave($user) {
+    $employee=fetchEmployeeForUser((int)$user['id']);
+    if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
+    $result=submitLeave((int)$employee['id'],json_decode(file_get_contents('php://input'),true)?:[]);
+    http_response_code($result['success']?201:422);echo json_encode($result);
+}
+function createEmployeeLeaveByAdmin($user) {
+    $input=json_decode(file_get_contents('php://input'),true)?:[];
+    $employeeId=filter_var($input['employee_id']??null,FILTER_VALIDATE_INT);
+    if(!$employeeId){http_response_code(422);echo json_encode(['success'=>false,'message'=>'A valid employee is required.']);return;}
+    $input['status']='approved';
+    $result=submitLeave((int)$employeeId,$input,(int)$user['id']);
+    http_response_code($result['success']?201:422);echo json_encode($result);
+}
+function reviewLeave($id,$user) {
+    $result=updateLeaveStatus($id,json_decode(file_get_contents('php://input'),true)?:[],(int)$user['id']);
+    http_response_code($result['success']?200:422);echo json_encode($result);
+}
+function editAttendanceRecord($id,$user) {
+    $result=adminEditAttendance($id,json_decode(file_get_contents('php://input'),true)?:[],(int)$user['id']);
+    http_response_code($result['success']?200:422);echo json_encode($result);
+}
+
 // ➕ ADD Employee
 function createEmployee() {
     global $conn;

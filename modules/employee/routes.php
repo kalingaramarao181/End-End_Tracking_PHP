@@ -33,6 +33,51 @@ if ($method === 'GET' && $path === 'employees/me') {
     if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'No employee profile is linked to this login.']);exit;}
     echo json_encode(['success'=>true,'data'=>$employee]);exit;
 }
+if ($method === 'GET' && $path === 'attendance/today') {
+    requirePermission('attendance','can_view');
+    attendanceToday($user); exit;
+}
+if ($method === 'POST' && in_array($path, ['attendance/time-in','attendance/time-out'], true)) {
+    requirePermission('attendance','can_view');
+    attendanceClock($user, $path === 'attendance/time-in' ? 'in' : 'out'); exit;
+}
+if ($method === 'GET' && $path === 'attendance/holidays') {
+    requirePermission('attendance','can_view');
+    listHolidays(); exit;
+}
+if ($method === 'POST' && $path === 'attendance/holidays') {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    saveHoliday($user); exit;
+}
+if ($method === 'DELETE' && preg_match('#^attendance/holidays/(\d+)$#', $path, $matches)) {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    removeHoliday((int)$matches[1]); exit;
+}
+if ($method === 'GET' && $path === 'attendance/leaves') {
+    requirePermission('attendance','can_view');
+    listLeaves($user, ($attendancePermission['data_scope'] ?? 'OWN') === 'ALL'); exit;
+}
+if ($method === 'POST' && $path === 'attendance/leaves') {
+    requirePermission('attendance','can_view');
+    createLeave($user); exit;
+}
+if ($method === 'POST' && $path === 'attendance/leaves/admin') {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    createEmployeeLeaveByAdmin($user); exit;
+}
+if ($method === 'PUT' && preg_match('#^attendance/leaves/(\d+)$#', $path, $matches)) {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    reviewLeave((int)$matches[1], $user); exit;
+}
+if ($method === 'PUT' && preg_match('#^attendance/records/(\d+)$#', $path, $matches)) {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    editAttendanceRecord((int)$matches[1], $user); exit;
+}
 if ($method === 'GET' && preg_match('#^employees/(\d+)/attendance$#', $path, $matches)) {
     requirePermission('attendance','can_view');
     $employeeId=(int)$matches[1];

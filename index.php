@@ -160,6 +160,10 @@ elseif (strpos($request, '/employees') === 0) {
     require_once __DIR__ . '/modules/employee/routes.php';
     exit;
 }
+elseif (strpos($request, '/attendance') === 0) {
+    require_once __DIR__ . '/modules/employee/routes.php';
+    exit;
+}
 
 // ---------------------------------------------------------------------
 // EMPLOYEE PROTECTED ROUTES

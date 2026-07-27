@@ -289,7 +289,10 @@ class ApplicationModel
             ];
         }
 
-        $dateCreated = $data['date_created'] ?? date('Y-m-d');
+        $newYorkNow = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+        $dateCreated = !empty($data['date_created'])
+            ? $data['date_created']
+            : $newYorkNow->format('Y-m-d H:i:s');
         $employeeId = (int)$data['employee_id'];
 
         $candidateId = !empty($data['candidate_id'])
@@ -624,7 +627,10 @@ class ApplicationModel
             ];
         }
 
-        $dateCreated = $data['date_created'] ?? date('Y-m-d');
+        $newYorkNow = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+        $dateCreated = !empty($data['date_created'])
+            ? $data['date_created']
+            : $newYorkNow->format('Y-m-d H:i:s');
         $employeeId = (int) $data['employee_id'];
 
         $candidateId = isset($data['candidate_id']) && $data['candidate_id'] !== ''
