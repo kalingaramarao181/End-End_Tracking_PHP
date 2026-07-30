@@ -11,6 +11,9 @@ if ($method === 'POST' && $path === 'employee/login') {
     loginEmployee(json_decode(file_get_contents('php://input'), true) ?: []);
     exit;
 }
+if ($method === 'GET' && $path === 'attendance/leaves/email-review') {
+    reviewLeaveFromEmail();
+}
 
 $user = authenticate();
 $employeePermission=getEffectivePermission('employees');
@@ -35,7 +38,7 @@ if ($method === 'GET' && $path === 'employees/me') {
 }
 if ($method === 'GET' && $path === 'attendance/today') {
     requirePermission('attendance','can_view');
-    attendanceToday($user); exit;
+    attendanceToday($user, ($attendancePermission['data_scope'] ?? 'OWN') === 'ALL'); exit;
 }
 if ($method === 'POST' && in_array($path, ['attendance/time-in','attendance/time-out'], true)) {
     requirePermission('attendance','can_view');

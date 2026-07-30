@@ -14,6 +14,13 @@ function fetchEmployees($filters) {
     $conditions = [];
     $params = [];
     $types = '';
+    $employment = strtolower(trim((string)($filters['employment'] ?? 'current')));
+    if ($employment === 'former') {
+        $conditions[] = 'e.user_id IS NULL';
+    } elseif ($employment !== 'all') {
+        // A linked login is the source of truth for current employment.
+        $conditions[] = 'e.user_id IS NOT NULL';
+    }
     if (!empty($filters['search'])) {
         $conditions[] = "(TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) LIKE ?
             OR e.employee_id LIKE ? OR u.nick_name LIKE ? OR u.email LIKE ?)";
@@ -41,7 +48,9 @@ function fetchEmployees($filters) {
         FROM employees e
         LEFT JOIN users u ON u.id = e.user_id
         LEFT JOIN positions p ON p.id = u.position_id
-        $where ORDER BY e.id DESC LIMIT ? OFFSET ?");
+        $where
+        ORDER BY (e.user_id IS NULL) ASC, e.id DESC
+        LIMIT ? OFFSET ?");
     $dataParams = array_merge($params, [(int)$filters['limit'], (int)$filters['offset']]);
     $stmt->bind_param($types . 'ii', ...$dataParams);
     $stmt->execute();
@@ -49,6 +58,35 @@ function fetchEmployees($filters) {
     $result = $stmt->get_result();
     while ($row = $result->fetch_assoc()) $rows[] = $row;
     return ['data' => $rows, 'total' => $total];
+}
+
+function fetchTodayAttendanceRoster() {
+    global $conn;
+    $date = newYorkNow()->format('Y-m-d');
+    $sql = "SELECT e.id,e.employee_id,e.user_id,
+            TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) legal_name,
+            u.nick_name company_name,u.email username,p.position_name role,
+            a.id attendance_id,a.time_in,a.time_out,a.status,a.work_status,a.source,
+            ROUND(CASE WHEN a.time_out<>'00:00:00' AND a.time_out>a.time_in
+                THEN TIMESTAMPDIFF(SECOND,a.time_in,a.time_out)/3600
+                ELSE COALESCE(a.num_hr,0) END,2) hours
+        FROM employees e
+        INNER JOIN users u ON u.id=e.user_id
+        LEFT JOIN positions p ON p.id=u.position_id
+        LEFT JOIN attendance a ON a.employee_id=e.id AND a.date=?
+        WHERE e.user_id IS NOT NULL
+        ORDER BY (a.id IS NULL),a.time_in ASC,e.firstname ASC,e.lastname ASC";
+    $stmt=$conn->prepare($sql);$stmt->bind_param('s',$date);$stmt->execute();
+    $rows=[];$present=0;$late=0;$working=0;
+    $result=$stmt->get_result();
+    while($row=$result->fetch_assoc()){
+        $row['id']=(int)$row['id'];$row['present']=$row['attendance_id']!==null;
+        $row['hours']=(float)($row['hours']??0);
+        if($row['present']){$present++;if((int)$row['status']===0)$late++;if($row['time_out']==='00:00:00')$working++;}
+        $rows[]=$row;
+    }
+    return ['success'=>true,'work_date'=>$date,'total_employees'=>count($rows),'present'=>$present,
+        'absent'=>max(0,count($rows)-$present),'late'=>$late,'working'=>$working,'data'=>$rows];
 }
 
 function fetchEmployeeById($id) {
@@ -383,8 +421,10 @@ function fetchLeaves($employeeId,$filters=[]) {
     global $conn;$where='';$types='';$params=[];
     if($employeeId){$where='WHERE l.employee_id=?';$types='i';$params[]=$employeeId;}
     elseif(!empty($filters['status'])){$where='WHERE l.status=?';$types='s';$params[]=$filters['status'];}
-    $stmt=$conn->prepare("SELECT l.*,e.employee_id,TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) employee_name
-        FROM leave_requests l JOIN employees e ON e.id=l.employee_id $where ORDER BY l.created_at DESC LIMIT 200");
+    $stmt=$conn->prepare("SELECT l.*,e.employee_id,TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) employee_name,
+        COALESCE(NULLIF(l.reviewer_name,''),NULLIF(TRIM(u.nick_name),''),u.email) reviewer_display_name
+        FROM leave_requests l JOIN employees e ON e.id=l.employee_id
+        LEFT JOIN users u ON u.id=l.reviewed_by $where ORDER BY l.created_at DESC LIMIT 200");
     if($params)$stmt->bind_param($types,...$params);$stmt->execute();return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 }
 function submitLeave($employeeId,$data,$reviewedBy=null) {
@@ -404,18 +444,38 @@ function submitLeave($employeeId,$data,$reviewedBy=null) {
         $stmt->bind_param('issssssi',$employeeId,$type,$start,$end,$duration,$reason,$status,$reviewedBy);
         $message='Employee leave added and approved.';
     }else{
-        $stmt=$conn->prepare('INSERT INTO leave_requests(employee_id,leave_type,start_date,end_date,duration,reason) VALUES(?,?,?,?,?,?)');
-        $stmt->bind_param('isssss',$employeeId,$type,$start,$end,$duration,$reason);
+        $approvalToken=bin2hex(random_bytes(32));$approvalTokenHash=hash('sha256',$approvalToken);
+        $stmt=$conn->prepare("INSERT INTO leave_requests(employee_id,leave_type,start_date,end_date,duration,reason,approval_token_hash,approval_token_expires_at)
+            VALUES(?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 7 DAY))");
+        $stmt->bind_param('issssss',$employeeId,$type,$start,$end,$duration,$reason,$approvalTokenHash);
         $message='Leave request submitted for approval.';
     }
-    return $stmt->execute()?['success'=>true,'message'=>$message]:['success'=>false,'message'=>'Leave request could not be submitted.'];
+    if(!$stmt->execute())return ['success'=>false,'message'=>'Leave request could not be submitted.'];
+    $result=['success'=>true,'message'=>$message,'leave_id'=>(int)$conn->insert_id];
+    if(isset($approvalToken))$result['approval_token']=$approvalToken;
+    return $result;
+}
+function fetchLeaveEmailDetails($id) {
+    global $conn;$stmt=$conn->prepare("SELECT l.*,e.employee_id,TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) employee_name
+        FROM leave_requests l JOIN employees e ON e.id=l.employee_id WHERE l.id=? LIMIT 1");
+    $stmt->bind_param('i',$id);$stmt->execute();return $stmt->get_result()->fetch_assoc();
 }
 function updateLeaveStatus($id,$data,$userId) {
     global $conn;$status=$data['status']??'';$comment=trim((string)($data['manager_comment']??''));
     if(!in_array($status,['approved','rejected','cancelled'],true))return ['success'=>false,'message'=>'Invalid leave status.'];
-    $stmt=$conn->prepare("UPDATE leave_requests SET status=?,manager_comment=?,reviewed_by=?,reviewed_at=UTC_TIMESTAMP()
-        WHERE id=? AND status='pending'");$stmt->bind_param('ssii',$status,$comment,$userId,$id);$stmt->execute();
+    $stmt=$conn->prepare("SELECT COALESCE(NULLIF(TRIM(nick_name),''),email) reviewer_name FROM users WHERE id=? LIMIT 1");
+    $stmt->bind_param('i',$userId);$stmt->execute();$reviewer=$stmt->get_result()->fetch_assoc();$reviewerName=$reviewer['reviewer_name']??'HR user';$source='Website';
+    $stmt=$conn->prepare("UPDATE leave_requests SET status=?,manager_comment=?,reviewed_by=?,reviewer_name=?,review_source=?,reviewed_at=UTC_TIMESTAMP(),approval_token_hash=NULL,approval_token_expires_at=NULL
+        WHERE id=? AND status='pending'");$stmt->bind_param('ssissi',$status,$comment,$userId,$reviewerName,$source,$id);$stmt->execute();
     return $stmt->affected_rows?['success'=>true,'message'=>'Leave request '.$status.'.']:['success'=>false,'message'=>'Pending leave request not found.'];
+}
+function reviewLeaveByEmailToken($token,$status,$reviewerName) {
+    global $conn;if(!preg_match('/^[a-f0-9]{64}$/',$token)||!in_array($status,['approved','rejected'],true))return ['success'=>false,'message'=>'This approval link is invalid.'];
+    $hash=hash('sha256',$token);$source='Email';
+    $stmt=$conn->prepare("UPDATE leave_requests SET status=?,reviewer_name=?,review_source=?,reviewed_at=UTC_TIMESTAMP(),approval_token_hash=NULL,approval_token_expires_at=NULL
+        WHERE approval_token_hash=? AND approval_token_expires_at>=UTC_TIMESTAMP() AND status='pending'");
+    $stmt->bind_param('ssss',$status,$reviewerName,$source,$hash);$stmt->execute();
+    return $stmt->affected_rows?['success'=>true,'message'=>'Leave request '.$status.' successfully.']:['success'=>false,'message'=>'This approval link has expired or was already used.'];
 }
 function adminEditAttendance($id,$data,$userId) {
     global $conn;$timeIn=$data['time_in']??'';$timeOut=$data['time_out']??'';$notes=trim((string)($data['notes']??''));

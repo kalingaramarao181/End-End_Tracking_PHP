@@ -71,6 +71,8 @@ PROMPT;
             CURLOPT_RETURNTRANSFER => true,
 
             CURLOPT_POST => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 45,
 
             CURLOPT_HTTPHEADER => [
 

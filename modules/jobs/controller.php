@@ -85,12 +85,27 @@ class JobController
 
         /*
         |--------------------------------------------------------------------------
-        | OPENAI JOB PARSER
+        | CREATE CORE JOB FIRST
         |--------------------------------------------------------------------------
         */
 
-        try {
+        $data['parsed_job_json'] = null;
+        $result = $this->jobModel->createJob($data);
 
+        if (!$result['success']) {
+            $this->jsonResponse(500, $result);
+        }
+
+        $jobId = $result['job_id'];
+        $aiProcessed = false;
+        $warning = null;
+
+        /*
+        |----------------------------------------------------------------------
+        | OPTIONAL AI ENRICHMENT
+        |----------------------------------------------------------------------
+        */
+        try {
             $parser = new OpenAIJobParser();
 
             $parsedJob = $parser->parseJobDescription(
@@ -105,33 +120,28 @@ class JobController
             }
 
             $data['parsed_job_json'] = $parsedJob;
+            $enrichmentResult = $this->jobModel->updateJob($jobId, $data);
 
-        } catch (Exception $e) {
-
-            $this->jsonResponse(500, [
-                "success" => false,
-                "message" => "Job parsing failed.",
-                "error" => $e->getMessage()
-            ]);
-
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | CREATE JOB
-        |--------------------------------------------------------------------------
-        */
-
-        $result = $this->jobModel->createJob($data);
-
-        if (!$result['success']) {
-            $this->jsonResponse(500, $result);
+            if ($enrichmentResult['success']) {
+                $aiProcessed = true;
+            } else {
+                error_log(
+                    'Parsed AI data could not be saved for job ' . $jobId .
+                    ': ' . ($enrichmentResult['error'] ?? $enrichmentResult['message'])
+                );
+                $warning = 'Job was saved, but its AI-parsed details could not be stored.';
+            }
+        } catch (Throwable $e) {
+            error_log('Job AI parsing failed during create for job ' . $jobId . ': ' . $e->getMessage());
+            $warning = 'Job was saved, but AI job parsing is currently unavailable.';
         }
 
         $this->jsonResponse(201, [
             "success" => true,
-            "message" => "Job created successfully.",
-            "job_id" => $result['job_id']
+            "message" => $warning ?: "Job created successfully.",
+            "job_id" => $jobId,
+            "ai_processed" => $aiProcessed,
+            "warning" => $warning
         ]);
     }
 
@@ -223,6 +233,9 @@ class JobController
         | Re-Parse Job Description
         |--------------------------------------------------------------------------
         */
+        $aiProcessed = null;
+        $warning = null;
+
         if (!empty($data['job_description'])) {
 
             try {
@@ -241,15 +254,13 @@ class JobController
                 }
 
                 $data['parsed_job_json'] = $parsedJob;
+                $aiProcessed = true;
 
-            } catch (Exception $e) {
-
-                $this->jsonResponse(500, [
-                    'success' => false,
-                    'message' => 'Job parsing failed.',
-                    'error' => $e->getMessage()
-                ]);
-
+            } catch (Throwable $e) {
+                error_log('Job AI parsing failed during update for job ' . $id . ': ' . $e->getMessage());
+                $data['parsed_job_json'] = $existing['data']['parsed_job_json'];
+                $aiProcessed = false;
+                $warning = 'Job details were updated, but AI parsing is currently unavailable. Previous AI data was preserved.';
             }
         } else {
             // Keep existing parsed JSON if description not changed
@@ -285,7 +296,13 @@ class JobController
             $this->jsonResponse(500, $result);
         }
 
-        $this->jsonResponse(200, $result);
+        $this->jsonResponse(200, [
+            'success' => true,
+            'message' => $warning ?: 'Job updated successfully.',
+            'affected_rows' => $result['affected_rows'] ?? 0,
+            'ai_processed' => $aiProcessed,
+            'warning' => $warning
+        ]);
     }
 
     /*

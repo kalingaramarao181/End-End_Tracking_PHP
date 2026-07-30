@@ -318,16 +318,11 @@ class JobModel
             ];
         }
 
-        if ($stmt->affected_rows === 0) {
-            return [
-                "success" => false,
-                "message" => "Job not found."
-            ];
-        }
-
         return [
             "success" => true,
-            "message" => "Job updated successfully.",
+            "message" => $stmt->affected_rows === 0
+                ? "Job details are already up to date."
+                : "Job updated successfully.",
             "affected_rows" => $stmt->affected_rows
         ];
     }

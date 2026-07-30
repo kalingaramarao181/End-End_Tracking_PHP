@@ -81,7 +81,7 @@ class ApplicationController
     */
 
 
-    public function create()
+    public function create($requireCandidateId = false)
     {
         require_once __DIR__ . '/../../middleware/auth.php';
         require_once __DIR__ . '/../../middleware/role.php';
@@ -130,10 +130,26 @@ class ApplicationController
         );
 
         // Validation
+        if ($requireCandidateId && empty($data['candidate_id'])) {
+            $this->jsonResponse(400, [
+                'success' => false,
+                'message' => 'candidate_id is required for new Bench Sales applications.'
+            ]);
+            return;
+        }
+
         if (
-            empty($data['candidate_id']) &&
-            empty($data['candidate_name'])
+            !empty($data['candidate_id']) &&
+            !$this->applicationModel->candidateExists((int)$data['candidate_id'])
         ) {
+            $this->jsonResponse(400, [
+                'success' => false,
+                'message' => 'The selected candidate does not exist.'
+            ]);
+            return;
+        }
+
+        if (empty($data['candidate_id']) && empty($data['candidate_name'])) {
             $this->jsonResponse(400, [
                 'success' => false,
                 'message' => 'candidate_id or candidate_name is required.'
@@ -319,7 +335,7 @@ class ApplicationController
 | Accepts multipart/form-data
 | Supports file uploads
 */
-    public function update($id, $expectedPositionId = null)
+    public function update($id, $expectedPositionId = null, $requireCandidateId = false)
 
     {
 
@@ -401,10 +417,24 @@ class ApplicationController
     |--------------------------------------------------------------------------
     */
 
+        if ($requireCandidateId && empty($data['candidate_id'])) {
+            $this->jsonResponse(400, [
+                'success' => false,
+                'message' => 'candidate_id is required for Bench Sales applications.'
+            ]);
+        }
+
         if (
-            empty($data['candidate_id']) &&
-            empty($data['candidate_name'])
+            !empty($data['candidate_id']) &&
+            !$this->applicationModel->candidateExists((int)$data['candidate_id'])
         ) {
+            $this->jsonResponse(400, [
+                'success' => false,
+                'message' => 'The selected candidate does not exist.'
+            ]);
+        }
+
+        if (empty($data['candidate_id']) && empty($data['candidate_name'])) {
             $this->jsonResponse(400, [
                 'success' => false,
                 'message' => 'candidate_id or candidate_name is required.'
@@ -456,9 +486,11 @@ class ApplicationController
 
     public function performanceDashboard()
     {
-        $result = $this->applicationModel->getPerformanceDashboard();
-
-        echo json_encode($result);
+        $result = $this->applicationModel->getPerformanceDashboard(
+            $_GET,
+            authUser()
+        );
+        $this->jsonResponse($result['success'] ? 200 : 500, $result);
     }
 
     /*
@@ -493,9 +525,39 @@ class ApplicationController
             ]);
         }
 
+        $interviewSlot = null;
+        $feedback = null;
+        if ($processId === 2) {
+            $interviewDate = trim((string)($data['interview_date'] ?? ''));
+            $startTime = trim((string)($data['interview_start_time'] ?? ''));
+            $endTime = trim((string)($data['interview_end_time'] ?? ''));
+            $feedback = trim((string)($data['feedback'] ?? ''));
+
+            if (
+                !preg_match('/^\d{4}-\d{2}-\d{2}$/', $interviewDate)
+                || !preg_match('/^\d{2}:\d{2}$/', $startTime)
+                || !preg_match('/^\d{2}:\d{2}$/', $endTime)
+                || $endTime <= $startTime
+            ) {
+                $this->jsonResponse(400, [
+                    'success' => false,
+                    'message' => 'A valid interview date, start time, and later end time are required.'
+                ]);
+            }
+            if ($feedback === '') {
+                $this->jsonResponse(400, [
+                    'success' => false,
+                    'message' => 'Interview feedback is required.'
+                ]);
+            }
+            $interviewSlot = $interviewDate . ' ' . $startTime . ' - ' . $endTime;
+        }
+
         $result = $this->applicationModel->updateProcess(
             $id,
-            $processId
+            $processId,
+            $interviewSlot,
+            $feedback
         );
 
         if (!$result['success']) {

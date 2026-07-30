@@ -34,7 +34,7 @@ if ($method === 'POST' && $requestUri === '/benchsales/create') {
     authenticate();
     requirePermission('bench_sales', 'can_create');
 
-    $applicationController->create();
+    $applicationController->create(true);
     exit;
 }
 
@@ -94,7 +94,7 @@ if (
     authenticate();
     requirePermission('bench_sales', 'can_edit');
 
-    $applicationController->update((int)$matches[1]);
+    $applicationController->update((int)$matches[1], 3, true);
     exit;
 }
 

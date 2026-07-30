@@ -13,6 +13,23 @@ class ApplicationModel
         $this->conn = $conn;
     }
 
+    public function candidateExists($candidateId)
+    {
+        $stmt = $this->conn->prepare(
+            "SELECT 1 FROM candidate WHERE id = ? LIMIT 1"
+        );
+
+        if (!$stmt) {
+            return false;
+        }
+
+        $candidateId = (int)$candidateId;
+        $stmt->bind_param("i", $candidateId);
+        $stmt->execute();
+
+        return $stmt->get_result()->num_rows > 0;
+    }
+
     /*
     |-------------------------------------------------------------------------- 
     | GET Submissions on Dashboard
@@ -299,7 +316,11 @@ class ApplicationModel
             ? (int)$data['candidate_id']
             : null;
 
-        $candidateName = $data['candidate_name'] ?? null;
+        // New linked records store the candidate relationship by ID only.
+        // candidate_name remains nullable so pre-existing name-only rows still display.
+        $candidateName = $candidateId === null
+            ? ($data['candidate_name'] ?? null)
+            : null;
         $vendor = $data['vendor'] ?? null;
         $poc = $data['poc'] ?? null;
         $feedback = $data['feedback'] ?? null;
@@ -637,7 +658,10 @@ class ApplicationModel
             ? (int) $data['candidate_id']
             : null;
 
-        $candidateName = $data['candidate_name'] ?? null;
+        // Clear the legacy snapshot once an application is linked to a candidate.
+        $candidateName = $candidateId === null
+            ? ($data['candidate_name'] ?? null)
+            : null;
         $vendor = $data['vendor'] ?? null;
         $poc = $data['poc'] ?? null;
         $feedback = $data['feedback'] ?? null;
@@ -735,108 +759,176 @@ class ApplicationModel
     }
 
 
-    public function getPerformanceDashboard()
-{
-    $sql = "
-    SELECT
-        u.id AS user_id,
-        u.nick_name AS employee_name,
+    public function getPerformanceDashboard(array $query = [], array $user = [])
+    {
+        $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
+            NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
+        $conditions = ['u.position_id = 3'];
+        $params = [];
+        $types = '';
 
-        /* Today's Submissions (process_id = 1) */
-        SUM(
-            CASE
-                WHEN a.process_id = 1
-                AND DATE(a.date_created) =
-                    DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', 'America/New_York'))
-                THEN 1
-                ELSE 0
-            END
-        ) AS today_submissions,
+        if (!in_array((int)($user['position_id'] ?? 0), [1, 2], true)) {
+            $conditions[] = 'a.employee_id = ?';
+            $params[] = (int)($user['id'] ?? 0);
+            $types .= 'i';
+        }
 
-        /* Weekly Submissions (process_id = 1) */
-        SUM(
-            CASE
-                WHEN a.process_id = 1
-                AND YEARWEEK(a.date_created, 1) =
-                    YEARWEEK(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', 'America/New_York'), 1)
-                THEN 1
-                ELSE 0
-            END
-        ) AS weekly_submissions,
+        foreach (['start_date' => '>=', 'end_date' => '<='] as $field => $operator) {
+            $value = trim((string)($query[$field] ?? ''));
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+                $conditions[] = $operator === '>='
+                    ? 'a.date_created >= ?'
+                    : 'a.date_created < DATE_ADD(?, INTERVAL 1 DAY)';
+                $params[] = $value;
+                $types .= 's';
+            }
+        }
 
-        /* Total Interviews (process_id = 2) */
-        SUM(
-            CASE
-                WHEN a.process_id = 2
-                THEN 1
-                ELSE 0
-            END
-        ) AS interviews,
+        $search = trim((string)($query['search'] ?? ''));
+        if ($search !== '') {
+            $conditions[] = "($candidateName LIKE ? OR u.nick_name LIKE ? OR a.role LIKE ?
+                OR a.vendor LIKE ? OR a.client LIKE ? OR a.poc LIKE ?)";
+            for ($index = 0; $index < 6; $index++) {
+                $params[] = '%' . $search . '%';
+                $types .= 's';
+            }
+        }
 
-        /* Total Placements (process_id = 3) */
-        SUM(
-            CASE
-                WHEN a.process_id = 3
-                THEN 1
-                ELSE 0
-            END
-        ) AS placements
+        if (!empty($query['employee_id'])) {
+            $conditions[] = 'a.employee_id = ?';
+            $params[] = (int)$query['employee_id'];
+            $types .= 'i';
+        }
+        if (!empty($query['candidate_id'])) {
+            $conditions[] = 'a.candidate_id = ?';
+            $params[] = (int)$query['candidate_id'];
+            $types .= 'i';
+        }
 
-    FROM users u
+        $where = ' WHERE ' . implode(' AND ', $conditions);
+        $from = " FROM application a
+            LEFT JOIN candidate c ON c.id = a.candidate_id
+            INNER JOIN users u ON u.id = a.employee_id";
 
-    INNER JOIN application a
-        ON a.employee_id = u.id
+        $summarySql = "SELECT COUNT(a.id) total_submissions,
+                SUM(a.process_id = 2) interviews,
+                SUM(a.process_id = 3) placements,
+                COUNT(DISTINCT a.employee_id) active_employees,
+                COUNT(DISTINCT COALESCE(a.candidate_id, CONCAT('legacy-', $candidateName))) unique_candidates
+            $from $where";
+        $summaryStmt = $this->executePerformanceQuery($summarySql, $types, $params);
+        if (!$summaryStmt) {
+            return ['success' => false, 'message' => 'Unable to load performance summary.'];
+        }
+        $summary = $summaryStmt->get_result()->fetch_assoc();
+        $summaryStmt->close();
+        foreach ($summary as $key => $value) {
+            $summary[$key] = (int)$value;
+        }
 
-    WHERE u.status = 'active'
+        $employeeSql = "SELECT a.employee_id AS user_id, u.nick_name AS employee_name,
+                COUNT(a.id) submissions, SUM(a.process_id = 2) interviews,
+                SUM(a.process_id = 3) placements,
+                ROUND((SUM(a.process_id = 3) / NULLIF(COUNT(a.id), 0)) * 100, 1) placement_rate
+            $from $where
+            GROUP BY a.employee_id, u.nick_name
+            ORDER BY submissions DESC, placements DESC, employee_name";
+        $employeeStmt = $this->executePerformanceQuery($employeeSql, $types, $params);
+        if (!$employeeStmt) {
+            return ['success' => false, 'message' => 'Unable to load employee performance.'];
+        }
+        $employeeRows = $this->fetchPerformanceRows($employeeStmt);
 
-    GROUP BY
-        u.id,
-        u.nick_name
+        $candidateSql = "SELECT a.candidate_id, $candidateName candidate_name,
+                COALESCE(NULLIF(c.skills, ''), a.role) technology,
+                c.email, c.phone, c.visa_status, c.current_location,
+                COUNT(a.id) submissions, SUM(a.process_id = 2) interviews,
+                SUM(a.process_id = 3) placements, MAX(a.date_created) last_submission
+            $from $where
+            GROUP BY a.candidate_id, candidate_name, technology, c.email, c.phone,
+                c.visa_status, c.current_location
+            ORDER BY submissions DESC, last_submission DESC LIMIT 50";
+        $candidateStmt = $this->executePerformanceQuery($candidateSql, $types, $params);
+        if (!$candidateStmt) {
+            return ['success' => false, 'message' => 'Unable to load candidate performance.'];
+        }
+        $candidateRows = $this->fetchPerformanceRows($candidateStmt);
 
-    HAVING
-        today_submissions > 0
-        OR weekly_submissions > 0
-        OR interviews > 0
-        OR placements > 0
+        $trendSql = "SELECT DATE(a.date_created) submission_date, COUNT(a.id) submissions,
+                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements
+            $from $where GROUP BY DATE(a.date_created) ORDER BY submission_date";
+        $trendStmt = $this->executePerformanceQuery($trendSql, $types, $params);
+        if (!$trendStmt) {
+            return ['success' => false, 'message' => 'Unable to load performance trend.'];
+        }
+        $trendRows = $this->fetchPerformanceRows($trendStmt);
 
-    ORDER BY
-        weekly_submissions DESC,
-        today_submissions DESC,
-        interviews DESC,
-        placements DESC,
-        employee_name ASC
-    ";
+        $applicationSql = "SELECT a.id, a.candidate_id, a.employee_id,
+                $candidateName candidate_name, u.nick_name employee_name,
+                a.date_created, a.role, a.vendor, a.poc, a.client, a.rate,
+                a.candidate_loc, a.feedback, a.process_id,
+                CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
+                    WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
+            $from $where ORDER BY a.date_created DESC, a.id DESC LIMIT 100";
+        $applicationStmt = $this->executePerformanceQuery($applicationSql, $types, $params);
 
-    $result = $this->conn->query($sql);
+        if (!$applicationStmt) {
+            return ['success' => false, 'message' => 'Unable to load submission details.'];
+        }
+        $applicationRows = $this->fetchPerformanceRows($applicationStmt);
 
-    if (!$result) {
         return [
-            "success" => false,
-            "message" => $this->conn->error
+            'success' => true,
+            'data' => [
+                'summary' => $summary,
+                'employees' => $employeeRows,
+                'candidates' => $candidateRows,
+                'trend' => $trendRows,
+                'applications' => $applicationRows,
+                'filters' => [
+                    'start_date' => $query['start_date'] ?? null,
+                    'end_date' => $query['end_date'] ?? null,
+                    'search' => $search
+                ]
+            ]
         ];
     }
 
-    $data = [];
-
-    while ($row = $result->fetch_assoc()) {
-
-        $data[] = [
-            "user_id" => (int)$row["user_id"],
-            "employee_name" => $row["employee_name"],
-
-            "today_submissions" => (int)$row["today_submissions"],
-            "weekly_submissions" => (int)$row["weekly_submissions"],
-
-            "interviews" => (int)$row["interviews"],
-            "placements" => (int)$row["placements"]
-        ];
+    private function executePerformanceQuery($sql, $types, array $params)
+    {
+        $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            error_log('Performance query prepare failed: ' . $this->conn->error);
+            return null;
+        }
+        if ($params) {
+            $stmt->bind_param($types, ...$params);
+        }
+        if (!$stmt->execute()) {
+            error_log('Performance query failed: ' . $stmt->error);
+            return null;
+        }
+        return $stmt;
     }
 
-    return [
-        "success" => true,
-        "data" => $data
-    ];
-}
+    private function fetchPerformanceRows($stmt)
+    {
+        $rows = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            foreach ([
+                'id', 'candidate_id', 'employee_id', 'user_id', 'process_id',
+                'submissions', 'interviews', 'placements'
+            ] as $field) {
+                if (array_key_exists($field, $row) && $row[$field] !== null) {
+                    $row[$field] = (int)$row[$field];
+                }
+            }
+            $rows[] = $row;
+        }
+        $stmt->close();
+        return $rows;
+    }
 
 
 
@@ -846,13 +938,15 @@ class ApplicationModel
 |--------------------------------------------------------------------------
 */
 
-public function updateProcess($id, $processId)
+public function updateProcess($id, $processId, $interviewSlot = null, $feedback = null)
 {
     $stmt = $this->conn->prepare("
         UPDATE application
         SET
             process_id = ?,
-            date = CONVERT_TZ(NOW(), '+00:00', '-04:00')
+            interview_slot = COALESCE(?, interview_slot),
+            feedback = COALESCE(?, feedback),
+            date = NOW()
         WHERE id = ?
     ");
 
@@ -864,7 +958,7 @@ public function updateProcess($id, $processId)
         ];
     }
 
-    $stmt->bind_param("ii", $processId, $id);
+    $stmt->bind_param("issi", $processId, $interviewSlot, $feedback, $id);
 
     if (!$stmt->execute()) {
         return [

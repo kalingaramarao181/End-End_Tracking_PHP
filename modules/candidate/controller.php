@@ -87,28 +87,8 @@ class CandidateController
     }
 
     /**
-     * Parse Resume using OpenAI
-     */
-    try {
-
-        $parser = new OpenAIResumeParser();
-
-        $parsedResume = $parser->parseResume(
-            $data['resume_path']
-        );
-
-    } catch (Exception $e) {
-
-        $this->jsonResponse(500, [
-            'success' => false,
-            'message' => 'Resume parsing failed.',
-            'error' => $e->getMessage()
-        ]);
-
-    }
-
-    /**
-     * Create Candidate
+     * Save the candidate before optional AI enrichment. An unavailable or
+     * expired AI credential must never prevent the core record from existing.
      */
     $result = $this->candidateModel->createCandidate($data);
 
@@ -120,6 +100,22 @@ class CandidateController
 
     $candidateId = $result['candidate_id'];
 
+    $parsedResume = null;
+    $aiProcessed = false;
+    $warning = null;
+
+    try {
+        $parser = new OpenAIResumeParser();
+        $parsedResume = $parser->parseResume($data['resume_path']);
+        $aiProcessed = true;
+    } catch (Throwable $e) {
+        error_log(
+            'Candidate resume AI parsing failed for candidate ' .
+            $candidateId . ': ' . $e->getMessage()
+        );
+        $warning = 'Candidate and resume were saved, but AI resume parsing is currently unavailable.';
+    }
+
     /**
      * Save Resume Details
      */
@@ -130,9 +126,11 @@ class CandidateController
     );
 
     if (!$resumeResult['success']) {
-
-        $this->jsonResponse(500, $resumeResult);
-
+        error_log(
+            'Candidate resume metadata could not be saved for candidate ' .
+            $candidateId . ': ' . ($resumeResult['error'] ?? $resumeResult['message'])
+        );
+        $warning = 'Candidate was saved, but resume processing metadata could not be saved.';
     }
 
     /**
@@ -140,8 +138,10 @@ class CandidateController
      */
     $this->jsonResponse(201, [
         'success' => true,
-        'message' => 'Candidate created successfully.',
-        'candidate_id' => $candidateId
+        'message' => $warning ?: 'Candidate created successfully.',
+        'candidate_id' => $candidateId,
+        'ai_processed' => $aiProcessed,
+        'warning' => $warning
     ]);
 }
 

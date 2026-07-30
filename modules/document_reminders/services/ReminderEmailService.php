@@ -158,6 +158,41 @@ HTML;
         return true;
     }
 
+    public function sendHtml($to, $name, $subject, $htmlBody, $plainBody = '')
+    {
+        if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            throw new RuntimeException('Approval recipient is not a valid email address.');
+        }
+        $mail = new PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host = $this->config['host'];
+            $mail->Port = (int)$this->config['port'];
+            $mail->SMTPAuth = true;
+            $mail->Username = $this->config['username'];
+            $mail->Password = $this->config['password'];
+            $mail->Timeout = 30;
+            $mail->CharSet = 'UTF-8';
+            if (in_array($this->config['encryption'], ['ssl', 'smtps'], true)) {
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+            } elseif (in_array($this->config['encryption'], ['tls', 'starttls'], true)) {
+                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            } else {
+                $mail->SMTPAutoTLS = false;
+                $mail->SMTPSecure = '';
+            }
+            $mail->setFrom($this->config['from_address'], $this->config['from_name'] ?? 'E2E Tracking Services');
+            $mail->addAddress($to, $name);
+            $mail->isHTML(true);
+            $mail->Subject = $subject;
+            $mail->Body = $htmlBody;
+            $mail->AltBody = $plainBody ?: strip_tags($htmlBody);
+            $mail->send();
+        } catch (PHPMailerException $exception) {
+            throw new RuntimeException('SMTP email failed: ' . $mail->ErrorInfo, 0, $exception);
+        }
+        return true;
+    }
     private function validateConfiguration()
     {
         $required = ['host', 'port', 'username', 'password', 'from_address'];

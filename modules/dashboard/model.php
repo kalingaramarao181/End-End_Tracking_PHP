@@ -12,6 +12,313 @@ class DashboardModel
         $this->conn = $conn;
     }
 
+    public function getExecutiveSummary(array $user)
+    {
+        $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
+        $metrics = [
+            'users' => "SELECT COUNT(*) value FROM users",
+            'active_users' => "SELECT COUNT(*) value FROM users WHERE status='Active'",
+            'employees' => "SELECT COUNT(*) value FROM employees WHERE user_id IS NOT NULL",
+            'former_employees' => "SELECT COUNT(*) value FROM employees WHERE user_id IS NULL",
+            'candidates' => "SELECT COUNT(*) value FROM candidate",
+            'active_candidates' => "SELECT COUNT(*) value FROM candidate WHERE status='Active'",
+            'open_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status='Open'",
+            'closed_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status<>'Open'",
+            'submissions_today' => "SELECT COUNT(*) value FROM application WHERE DATE(date_created)=CURDATE()",
+            'interviews_today' => "SELECT COUNT(*) value FROM application WHERE process_id=2 AND DATE(COALESCE(NULLIF(interview_slot,''),date_created))=CURDATE()",
+            'placements' => "SELECT COUNT(*) value FROM application WHERE process_id=3",
+            'attendance_today' => "SELECT COUNT(DISTINCT a.employee_id) value FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()",
+            'absent_today' => "SELECT GREATEST((SELECT COUNT(*) FROM employees WHERE user_id IS NOT NULL)-(SELECT COUNT(DISTINCT a.employee_id) FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()),0) value",
+            'pending_leave_requests' => "SELECT COUNT(*) value FROM leave_requests WHERE status='pending'",
+            'documents_expiring' => "SELECT COUNT(*) value FROM document_reminders WHERE status='Pending' AND expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)",
+        ];
+        if ($isAdmin) {
+            $metrics['vendors'] = "SELECT COUNT(*) value FROM primevendors";
+        }
+
+        $data = [];
+        foreach ($metrics as $key => $sql) {
+            $result = $this->conn->query($sql);
+            // Older installations may not have every optional enterprise table yet.
+            $data[$key] = $result ? (int)$result->fetch_assoc()['value'] : null;
+        }
+        return ['success' => true, 'data' => $data];
+    }
+
+    public function getAuditActivities(array $user, $limit = 30)
+    {
+        $limit = min(100, max(1, (int)$limit));
+        $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
+        $where = $isAdmin ? '' : 'WHERE al.user_id = ?';
+        $sql = "SELECT al.id,al.user_id,al.employee_id,al.resource,LOWER(al.action) action,
+                al.record_id,al.status,al.created_at,u.nick_name actor,u.email actor_email
+            FROM audit_logs al LEFT JOIN users u ON u.id=al.user_id
+            $where ORDER BY al.created_at DESC,al.id DESC LIMIT ?";
+        $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            return ['success' => false, 'message' => 'Unable to load activity history.'];
+        }
+        if ($isAdmin) {
+            $stmt->bind_param('i', $limit);
+        } else {
+            $userId = (int)$user['id'];
+            $stmt->bind_param('ii', $userId, $limit);
+        }
+        $stmt->execute();
+        $rows = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $row['id'] = (int)$row['id'];
+            $row['user_id'] = $row['user_id'] === null ? null : (int)$row['user_id'];
+            $row['message'] = trim(($row['actor'] ?: 'System user') . ' '
+                . $row['action'] . ' ' . str_replace('_', ' ', $row['resource'])
+                . ($row['record_id'] ? ' #' . $row['record_id'] : ''));
+            $rows[] = $row;
+        }
+        return ['success' => true, 'data' => $rows];
+    }
+
+    public function getWorkforceAnalytics(array $user, $selectedEmployeeId = null, $period = 'this_week')
+    {
+        $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
+        $scopeSql = $isAdmin ? '' : ' AND a.employee_id = ?';
+        $employeeScopeSql = $isAdmin ? '' : ' AND u.id = ?';
+        $scopeParams = $isAdmin ? [] : [(int)$user['id']];
+        $scopeTypes = $isAdmin ? '' : 'i';
+        $period = in_array($period, ['today', 'this_week', 'this_month'], true)
+            ? $period
+            : 'this_week';
+
+        if ($period === 'today') {
+            $currentPeriod = 'DATE(a.date_created) = CURDATE()';
+            $previousPeriod = 'DATE(a.date_created) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)';
+            $periodLabel = 'Today';
+            $previousPeriodLabel = 'Yesterday';
+        } elseif ($period === 'this_month') {
+            $currentPeriod = 'YEAR(a.date_created) = YEAR(CURDATE()) AND MONTH(a.date_created) = MONTH(CURDATE())';
+            $previousPeriod = 'YEAR(a.date_created) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+                AND MONTH(a.date_created) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))';
+            $periodLabel = 'This Month';
+            $previousPeriodLabel = 'Last Month';
+        } else {
+            $currentPeriod = 'YEARWEEK(a.date_created, 1) = YEARWEEK(CURDATE(), 1)';
+            $previousPeriod = 'YEARWEEK(a.date_created, 1) = YEARWEEK(DATE_SUB(CURDATE(), INTERVAL 1 WEEK), 1)';
+            $periodLabel = 'This Week';
+            $previousPeriodLabel = 'Last Week';
+        }
+
+        $employeeSql = "SELECT
+                u.id AS employee_id,
+                COALESCE(NULLIF(u.nick_name, ''), u.email, CONCAT('User #', u.id)) AS employee_name,
+                p.position_name AS employee_role,
+                SUM(CASE WHEN $currentPeriod THEN 1 ELSE 0 END) AS this_week_submissions,
+                SUM(CASE WHEN $previousPeriod THEN 1 ELSE 0 END) AS last_week_submissions,
+                SUM(CASE WHEN a.process_id = 2 AND $currentPeriod THEN 1 ELSE 0 END) AS this_week_interviews,
+                SUM(CASE WHEN a.process_id = 2 AND $previousPeriod THEN 1 ELSE 0 END) AS last_week_interviews,
+                SUM(CASE WHEN a.process_id = 3 AND $currentPeriod THEN 1 ELSE 0 END) AS this_week_placements,
+                SUM(CASE WHEN a.process_id = 3 AND $previousPeriod THEN 1 ELSE 0 END) AS last_week_placements
+            FROM users u
+            LEFT JOIN application a ON a.employee_id = u.id
+                AND (
+                    $currentPeriod OR $previousPeriod
+                )
+            LEFT JOIN positions p ON p.id = u.position_id
+            WHERE u.status = 'Active' $employeeScopeSql
+            GROUP BY u.id, u.nick_name, u.email, p.position_name
+            HAVING this_week_submissions > 0 OR last_week_submissions > 0
+                OR this_week_interviews > 0 OR last_week_interviews > 0
+                OR this_week_placements > 0 OR last_week_placements > 0
+            ORDER BY this_week_submissions DESC, last_week_submissions DESC, employee_name";
+        $employeeStmt = $this->prepareAndExecute($employeeSql, $scopeTypes, $scopeParams);
+        if (!$employeeStmt) {
+            return ['success' => false, 'message' => 'Unable to load weekly employee analytics.'];
+        }
+
+        $employees = [];
+        $employeeResult = $employeeStmt->get_result();
+        while ($row = $employeeResult->fetch_assoc()) {
+            foreach ([
+                'employee_id', 'this_week_submissions', 'last_week_submissions',
+                'this_week_interviews', 'last_week_interviews',
+                'this_week_placements', 'last_week_placements'
+            ] as $field) {
+                $row[$field] = (int)$row[$field];
+            }
+            $row['submission_change'] =
+                $row['this_week_submissions'] - $row['last_week_submissions'];
+            $employees[] = $row;
+        }
+
+        $allowedEmployeeIds = array_column($employees, 'employee_id');
+        if (!$isAdmin) {
+            $selectedEmployeeId = (int)$user['id'];
+        } elseif (!$selectedEmployeeId || !in_array($selectedEmployeeId, $allowedEmployeeIds, true)) {
+            $selectedEmployeeId = $employees[0]['employee_id'] ?? null;
+        }
+
+        $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
+            NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
+        $submissionSelect = "a.id, a.candidate_id, a.employee_id, a.date_created AS submission_date,
+            $candidateName AS candidate_name, c.email AS candidate_email, c.phone AS candidate_phone,
+            COALESCE(NULLIF(c.skills, ''), a.role) AS technology,
+            COALESCE(NULLIF(c.visa_status, ''), a.visastatus) AS visa_status,
+            c.current_location, a.candidate_loc, a.vendor, a.poc AS vendor_contact,
+            a.email AS vendor_email, a.contact, a.client, a.role, a.rate,
+            a.feedback, a.remarks, a.interview_slot, a.interview_mode, a.process_id,
+            CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview' WHEN 3 THEN 'Placed' ELSE 'Unknown' END AS status,
+            COALESCE(NULLIF(u.nick_name, ''), u.email) AS employee_name";
+        $submissionFrom = " FROM application a
+            LEFT JOIN candidate c ON c.id = a.candidate_id
+            INNER JOIN users u ON u.id = a.employee_id";
+
+        $latestSql = "SELECT $submissionSelect $submissionFrom
+            WHERE 1=1 $scopeSql
+            ORDER BY a.date_created DESC, a.id DESC LIMIT 8";
+        $latestStmt = $this->prepareAndExecute($latestSql, $scopeTypes, $scopeParams);
+        if (!$latestStmt) {
+            return ['success' => false, 'message' => 'Unable to load latest submissions.'];
+        }
+        $latest = $this->fetchSubmissionRows($latestStmt);
+
+        $selectedSubmissions = [];
+        if ($selectedEmployeeId) {
+            $selectedSql = "SELECT $submissionSelect $submissionFrom
+                WHERE a.employee_id = ?
+                AND $currentPeriod
+                ORDER BY a.date_created DESC, a.id DESC LIMIT 50";
+            $selectedStmt = $this->prepareAndExecute($selectedSql, 'i', [$selectedEmployeeId]);
+            if (!$selectedStmt) {
+                return ['success' => false, 'message' => 'Unable to load employee candidate details.'];
+            }
+            $selectedSubmissions = $this->fetchSubmissionRows($selectedStmt);
+        }
+
+        $totals = [
+            'this_week_submissions' => array_sum(array_column($employees, 'this_week_submissions')),
+            'last_week_submissions' => array_sum(array_column($employees, 'last_week_submissions')),
+            'this_week_placements' => array_sum(array_column($employees, 'this_week_placements')),
+            'last_week_placements' => array_sum(array_column($employees, 'last_week_placements')),
+            'this_week_interviews' => array_sum(array_column($employees, 'this_week_interviews')),
+            'last_week_interviews' => array_sum(array_column($employees, 'last_week_interviews')),
+        ];
+
+        return [
+            'success' => true,
+            'data' => [
+                'employees' => $employees,
+                'totals' => $totals,
+                'latest_submissions' => $latest,
+                'selected_employee_id' => $selectedEmployeeId,
+                'selected_submissions' => $selectedSubmissions,
+                'period' => $period,
+                'period_label' => $periodLabel,
+                'previous_period_label' => $previousPeriodLabel,
+                'week_starts_on' => 'Monday'
+            ]
+        ];
+    }
+
+    public function getProfilePerformance(array $user, $candidateId = null, $profileUserId = null)
+    {
+        $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
+        $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
+            NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
+        $conditions = [];
+        $params = [];
+        $types = '';
+
+        if ($candidateId) {
+            $conditions[] = 'a.candidate_id = ?';
+            $params[] = (int)$candidateId;
+            $types .= 'i';
+        } else {
+            $conditions[] = 'a.employee_id = ?';
+            $params[] = (int)$profileUserId;
+            $types .= 'i';
+            if (!$isAdmin && (int)$profileUserId !== (int)$user['id']) {
+                return ['success' => false, 'message' => 'You do not have access to this user performance profile.'];
+            }
+        }
+
+        if (!$isAdmin && $candidateId) {
+            $conditions[] = 'a.employee_id = ?';
+            $params[] = (int)$user['id'];
+            $types .= 'i';
+        }
+
+        $where = ' WHERE ' . implode(' AND ', $conditions);
+        $from = " FROM application a
+            LEFT JOIN candidate c ON c.id = a.candidate_id
+            INNER JOIN users u ON u.id = a.employee_id
+            LEFT JOIN positions p ON p.id = u.position_id";
+
+        $summarySql = "SELECT COUNT(a.id) submissions,
+                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements,
+                COUNT(DISTINCT a.employee_id) users,
+                COUNT(DISTINCT COALESCE(a.candidate_id, CONCAT('legacy-', $candidateName))) candidates,
+                MIN(a.date_created) first_submission, MAX(a.date_created) latest_submission
+            $from $where";
+        $summaryStmt = $this->prepareAndExecute($summarySql, $types, $params);
+        if (!$summaryStmt) {
+            return ['success' => false, 'message' => 'Unable to load profile performance.'];
+        }
+        $summary = $summaryStmt->get_result()->fetch_assoc();
+        $summaryStmt->close();
+        foreach (['submissions', 'interviews', 'placements', 'users', 'candidates'] as $field) {
+            $summary[$field] = (int)$summary[$field];
+        }
+
+        $groupSelect = $candidateId
+            ? "a.employee_id AS related_id, COALESCE(NULLIF(u.nick_name, ''), u.email) AS related_name,
+                p.position_name AS related_subtitle"
+            : "a.candidate_id AS related_id, $candidateName AS related_name,
+                COALESCE(NULLIF(c.skills, ''), a.role) AS related_subtitle";
+        $groupBy = $candidateId
+            ? 'a.employee_id, u.nick_name, u.email, p.position_name'
+            : "a.candidate_id, related_name, related_subtitle";
+        $breakdownSql = "SELECT $groupSelect, COUNT(a.id) submissions,
+                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements,
+                MAX(a.date_created) latest_submission
+            $from $where GROUP BY $groupBy
+            ORDER BY submissions DESC, latest_submission DESC LIMIT 30";
+        $breakdownStmt = $this->prepareAndExecute($breakdownSql, $types, $params);
+        if (!$breakdownStmt) {
+            return ['success' => false, 'message' => 'Unable to load profile breakdown.'];
+        }
+        $breakdown = $this->fetchSubmissionRowsGeneric($breakdownStmt);
+
+        $trendSql = "SELECT DATE(a.date_created) activity_date, COUNT(a.id) submissions,
+                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements
+            $from $where GROUP BY DATE(a.date_created)
+            ORDER BY activity_date DESC LIMIT 60";
+        $trendStmt = $this->prepareAndExecute($trendSql, $types, $params);
+        if (!$trendStmt) {
+            return ['success' => false, 'message' => 'Unable to load profile trend.'];
+        }
+        $trend = array_reverse($this->fetchSubmissionRowsGeneric($trendStmt));
+
+        $applicationSql = "SELECT a.id, a.candidate_id, a.employee_id, a.date_created,
+                $candidateName candidate_name, COALESCE(NULLIF(u.nick_name, ''), u.email) employee_name,
+                p.position_name employee_role, a.role, a.vendor, a.client, a.poc,
+                a.rate, a.candidate_loc, a.feedback, a.remarks, a.process_id,
+                CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
+                    WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
+            $from $where ORDER BY a.date_created DESC, a.id DESC LIMIT 100";
+        $applicationStmt = $this->prepareAndExecute($applicationSql, $types, $params);
+        if (!$applicationStmt) {
+            return ['success' => false, 'message' => 'Unable to load profile submissions.'];
+        }
+        $applications = $this->fetchSubmissionRowsGeneric($applicationStmt);
+
+        return ['success' => true, 'data' => [
+            'profile_type' => $candidateId ? 'candidate' : 'user',
+            'summary' => $summary,
+            'breakdown' => $breakdown,
+            'trend' => $trend,
+            'applications' => $applications
+        ]];
+    }
+
     public function getTableData($table, array $query, array $user)
     {
         $specs = $this->tableSpecs();
@@ -211,7 +518,8 @@ class DashboardModel
             'submissions' => [
                 'select' => "a.id, a.date_created AS submission_date, $candidateName AS candidate,
                     u.nick_name AS recruiter, a.vendor, a.client, a.role AS technology,
-                    $status AS status, a.rate, a.candidate_loc AS location",
+                    $status AS status, a.rate, a.candidate_loc AS location,
+                    a.interview_slot, a.feedback",
                 'from' => $applicationFrom,
                 'conditions' => [],
                 'owner_column' => 'a.employee_id',
@@ -300,6 +608,41 @@ class DashboardModel
             return null;
         }
         return $stmt;
+    }
+
+    private function fetchSubmissionRows($stmt)
+    {
+        $rows = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            foreach (['id', 'employee_id', 'process_id'] as $field) {
+                $row[$field] = (int)$row[$field];
+            }
+            $row['candidate_id'] = $row['candidate_id'] === null
+                ? null
+                : (int)$row['candidate_id'];
+            $rows[] = $row;
+        }
+        return $rows;
+    }
+
+    private function fetchSubmissionRowsGeneric($stmt)
+    {
+        $rows = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            foreach ([
+                'id', 'candidate_id', 'employee_id', 'related_id', 'process_id',
+                'submissions', 'interviews', 'placements'
+            ] as $field) {
+                if (array_key_exists($field, $row) && $row[$field] !== null) {
+                    $row[$field] = (int)$row[$field];
+                }
+            }
+            $rows[] = $row;
+        }
+        $stmt->close();
+        return $rows;
     }
 
     private function validDate($value)
