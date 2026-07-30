@@ -47,11 +47,11 @@ if ($method === 'GET' && $path === 'attendance/month') {
 }
 if ($method === 'GET' && $path === 'attendance/ip-settings') {
     if ((int)$user['position_id'] !== 1) employeeSuperAdminDenied();
-    getAttendanceIpPermissions(); exit;
+    getAttendanceIpSettings(); exit;
 }
-if ($method === 'PUT' && preg_match('#^attendance/ip-settings/(\d+)$#', $path, $matches)) {
+if ($method === 'PUT' && $path === 'attendance/ip-settings') {
     if ((int)$user['position_id'] !== 1) employeeSuperAdminDenied();
-    updateEmployeeWfhPermission((int)$matches[1],$user); exit;
+    updateAttendanceIpSettings(); exit;
 }if ($method === 'POST' && in_array($path, ['attendance/time-in','attendance/time-out'], true)) {
     requirePermission('attendance','can_view');
     attendanceClock($user, $path === 'attendance/time-in' ? 'in' : 'out'); exit;

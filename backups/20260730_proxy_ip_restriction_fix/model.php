@@ -367,22 +367,12 @@ function saveEmployeeWfhPermission($employeeId,$allowed,$updatedBy) {
     return ['success'=>true,'message'=>$allowed?'WFH attendance access granted for this employee.':'WFH attendance access removed. Company IP restriction now applies.','employee_id'=>$employeeId,'wfh_allowed'=>(bool)$allowed];
 }
 function attendanceClientIp() {
-    $remote=trim((string)($_SERVER['REMOTE_ADDR']??''));
-    $isTrustedLocalProxy=in_array($remote,['127.0.0.1','::1','::'],true);
-    if($isTrustedLocalProxy){
-        $forwarded=trim((string)($_SERVER['HTTP_X_FORWARDED_FOR']??''));
-        $candidates=$forwarded!==''?explode(',',$forwarded):[];
-        $realIp=trim((string)($_SERVER['HTTP_X_REAL_IP']??''));
-        if($realIp!=='')$candidates[]=$realIp;
-        foreach($candidates as $candidate){
-            $candidate=trim($candidate);
-            if(filter_var($candidate,FILTER_VALIDATE_IP)!==false&&!in_array($candidate,['127.0.0.1','::1','::'],true))return $candidate;
-        }
-        // Never treat the reverse proxy's loopback address as the employee IP.
-        return '';
-    }
-    return filter_var($remote,FILTER_VALIDATE_IP)!==false?$remote:'';
+    // REMOTE_ADDR is intentionally used instead of user-controlled forwarding
+    // headers. If the API is behind a trusted reverse proxy, configure that
+    // proxy/web server to replace REMOTE_ADDR with the verified client address.
+    return trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
 }
+
 function ipMatchesNetwork($ip,$network) {
     $network=trim($network);
     if($network===''||filter_var($ip,FILTER_VALIDATE_IP)===false)return false;

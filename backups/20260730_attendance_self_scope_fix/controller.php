@@ -28,14 +28,14 @@ function loginEmployee($data) {
         return;
     }
 
-    // ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â If password is hashed use password_verify()
+    // ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â If password is hashed use password_verify()
     if ($employee['password'] !== $password) {
         http_response_code(401);
         echo json_encode(["message" => "Invalid password"]);
         return;
     }
 
-    // ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Generate JWT
+    // ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Generate JWT
     $payload = [
         "iss" => $issuer,
         "iat" => time(),
@@ -54,7 +54,7 @@ function loginEmployee($data) {
     ]);
 }
 
-// ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â¥ GET Employees
+// ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¥ GET Employees
 function getEmployees($user) {
 
     $filters = [
@@ -151,8 +151,7 @@ function setEmployeeAttendanceDate($id, $date) {
 }
 
 function attendanceToday($user, $all = false) {
-    $selfOnly=filter_var($_GET['self']??false,FILTER_VALIDATE_BOOLEAN);
-    if($all&&!$selfOnly){
+    if($all){
         $date=$_GET['date']??newYorkNow()->format('Y-m-d');
         if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$date)){
             http_response_code(422);echo json_encode(['success'=>false,'message'=>'A valid date is required.']);return;
@@ -268,7 +267,7 @@ function editAttendanceRecord($id,$user) {
     http_response_code($result['success']?200:422);echo json_encode($result);
 }
 
-// ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ADD Employee
+// ÃƒÂ¢Ã…Â¾Ã¢â‚¬Â¢ ADD Employee
 function createEmployee() {
     global $conn;
 

@@ -338,51 +338,28 @@ function newYorkNow() {
     return new DateTimeImmutable('now',new DateTimeZone('America/New_York'));
 }
 
-function fetchAttendanceIpPermissions() {
-    global $conn;
-    $result=$conn->query("SELECT e.id employee_id,e.employee_id employee_code,
-            TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) legal_name,
-            u.nick_name company_name,u.email username,p.position_name role,
-            COALESCE(w.wfh_allowed,0) wfh_allowed,w.updated_at
-        FROM employees e INNER JOIN users u ON u.id=e.user_id
-        LEFT JOIN positions p ON p.id=u.position_id
-        LEFT JOIN attendance_wfh_permissions w ON w.employee_id=e.id
-        WHERE e.user_id IS NOT NULL ORDER BY e.firstname,e.lastname");
-    if(!$result)return ['success'=>false,'message'=>'Run the per-user WFH permission migration first.'];
-    $rows=[];while($row=$result->fetch_assoc()){$row['employee_id']=(int)$row['employee_id'];$row['wfh_allowed']=(bool)$row['wfh_allowed'];$rows[]=$row;}
-    return ['success'=>true,'data'=>$rows];
+function publicAttendanceSettings() {
+    $settings=attendanceSettings();
+    return ['ip_restriction_enabled'=>(bool)($settings['ip_restriction_enabled']??1),
+        'allowed_ip_addresses'=>(string)($settings['allowed_ip_addresses']??'')];
 }
-function employeeWfhAllowed($employeeId) {
-    global $conn;$stmt=$conn->prepare('SELECT wfh_allowed FROM attendance_wfh_permissions WHERE employee_id=? LIMIT 1');
-    if(!$stmt)return false;$stmt->bind_param('i',$employeeId);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();
-    return (bool)($row['wfh_allowed']??false);
-}
-function saveEmployeeWfhPermission($employeeId,$allowed,$updatedBy) {
-    global $conn;$value=$allowed?1:0;
-    $stmt=$conn->prepare('SELECT id FROM employees WHERE id=? AND user_id IS NOT NULL LIMIT 1');
-    $stmt->bind_param('i',$employeeId);$stmt->execute();if(!$stmt->get_result()->fetch_assoc())return ['success'=>false,'not_found'=>true,'message'=>'Active employee not found.'];
-    $stmt=$conn->prepare('INSERT INTO attendance_wfh_permissions(employee_id,wfh_allowed,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE wfh_allowed=VALUES(wfh_allowed),updated_by=VALUES(updated_by),updated_at=CURRENT_TIMESTAMP');
-    if(!$stmt)return ['success'=>false,'message'=>'Run the per-user WFH permission migration first.'];
-    $stmt->bind_param('iii',$employeeId,$value,$updatedBy);$stmt->execute();
-    return ['success'=>true,'message'=>$allowed?'WFH attendance access granted for this employee.':'WFH attendance access removed. Company IP restriction now applies.','employee_id'=>$employeeId,'wfh_allowed'=>(bool)$allowed];
+
+function saveAttendanceIpSettings($enabled) {
+    global $conn;$value=$enabled?1:0;
+    $stmt=$conn->prepare('UPDATE attendance_settings SET ip_restriction_enabled=? WHERE id=1');
+    if(!$stmt)return ['success'=>false,'message'=>'Run the attendance IP restriction migration first.'];
+    $stmt->bind_param('i',$value);
+    return $stmt->execute()
+        ?['success'=>true,'message'=>$enabled?'IP restriction enabled for attendance.':'IP restriction disabled. Employees can clock attendance from WFH.','settings'=>publicAttendanceSettings()]
+        :['success'=>false,'message'=>'Attendance restriction could not be updated.'];
 }
 function attendanceClientIp() {
-    $remote=trim((string)($_SERVER['REMOTE_ADDR']??''));
-    $isTrustedLocalProxy=in_array($remote,['127.0.0.1','::1','::'],true);
-    if($isTrustedLocalProxy){
-        $forwarded=trim((string)($_SERVER['HTTP_X_FORWARDED_FOR']??''));
-        $candidates=$forwarded!==''?explode(',',$forwarded):[];
-        $realIp=trim((string)($_SERVER['HTTP_X_REAL_IP']??''));
-        if($realIp!=='')$candidates[]=$realIp;
-        foreach($candidates as $candidate){
-            $candidate=trim($candidate);
-            if(filter_var($candidate,FILTER_VALIDATE_IP)!==false&&!in_array($candidate,['127.0.0.1','::1','::'],true))return $candidate;
-        }
-        // Never treat the reverse proxy's loopback address as the employee IP.
-        return '';
-    }
-    return filter_var($remote,FILTER_VALIDATE_IP)!==false?$remote:'';
+    // REMOTE_ADDR is intentionally used instead of user-controlled forwarding
+    // headers. If the API is behind a trusted reverse proxy, configure that
+    // proxy/web server to replace REMOTE_ADDR with the verified client address.
+    return trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
 }
+
 function ipMatchesNetwork($ip,$network) {
     $network=trim($network);
     if($network===''||filter_var($ip,FILTER_VALIDATE_IP)===false)return false;
@@ -415,11 +392,11 @@ function getTodayAttendanceState($employeeId) {
     $stmt->bind_param('is',$employeeId,$date);$stmt->execute();
     $record=$stmt->get_result()->fetch_assoc();
     if($record){$record['id']=(int)$record['id'];$record['hours']=(float)$record['hours'];}
-    $settings=attendanceSettings();$clientIp=attendanceClientIp();$wfhAllowed=employeeWfhAllowed($employeeId);
+    $settings=attendanceSettings();$clientIp=attendanceClientIp();
     return ['success'=>true,'timezone'=>'America/New_York','current_time'=>$now->format(DateTimeInterface::ATOM),
         'work_date'=>$date,'schedule'=>$settings,'record'=>$record,
-        'network'=>['restriction_enabled'=>(bool)($settings['ip_restriction_enabled']??1),'wfh_allowed'=>$wfhAllowed,
-            'allowed'=>!(bool)($settings['ip_restriction_enabled']??1)||$wfhAllowed||companyIpAllows($clientIp,$settings['allowed_ip_addresses']??''),'ip'=>$clientIp]];
+        'network'=>['restriction_enabled'=>(bool)($settings['ip_restriction_enabled']??1),
+            'allowed'=>!(bool)($settings['ip_restriction_enabled']??1)||companyIpAllows($clientIp,$settings['allowed_ip_addresses']??''),'ip'=>$clientIp]];
 }
 
 function clockAttendance($employeeId,$userId,$action) {
@@ -428,7 +405,7 @@ function clockAttendance($employeeId,$userId,$action) {
     $utc=$now->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     $settings=attendanceSettings();
     $clientIp=attendanceClientIp();
-    if((bool)($settings['ip_restriction_enabled']??1)&&!employeeWfhAllowed($employeeId)&&!companyIpAllows($clientIp,$settings['allowed_ip_addresses']??'')){
+    if((bool)($settings['ip_restriction_enabled']??1)&&!companyIpAllows($clientIp,$settings['allowed_ip_addresses']??'')){
         return ['success'=>false,'message'=>'Time In and Time Out are only available from the company network. Your current IP is '.$clientIp.'.'];
     }
     $conn->begin_transaction();

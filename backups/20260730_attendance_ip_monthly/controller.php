@@ -28,14 +28,14 @@ function loginEmployee($data) {
         return;
     }
 
-    // ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â If password is hashed use password_verify()
+    // ⚠️ If password is hashed use password_verify()
     if ($employee['password'] !== $password) {
         http_response_code(401);
         echo json_encode(["message" => "Invalid password"]);
         return;
     }
 
-    // ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Generate JWT
+    // ✅ Generate JWT
     $payload = [
         "iss" => $issuer,
         "iat" => time(),
@@ -48,13 +48,13 @@ function loginEmployee($data) {
 
     $jwt = JWT::encode($payload, $secret_key, 'HS256');
 
-    echo json_encode([
+    echo json_encode([      
         "message" => "Login successful",
         "token" => $jwt
     ]);
 }
 
-// ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â¥ GET Employees
+// 📥 GET Employees
 function getEmployees($user) {
 
     $filters = [
@@ -151,36 +151,12 @@ function setEmployeeAttendanceDate($id, $date) {
 }
 
 function attendanceToday($user, $all = false) {
-    $selfOnly=filter_var($_GET['self']??false,FILTER_VALIDATE_BOOLEAN);
-    if($all&&!$selfOnly){
-        $date=$_GET['date']??newYorkNow()->format('Y-m-d');
-        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$date)){
-            http_response_code(422);echo json_encode(['success'=>false,'message'=>'A valid date is required.']);return;
-        }
-        echo json_encode(fetchAttendanceRoster($date));return;
-    }
+    if($all){echo json_encode(fetchTodayAttendanceRoster());return;}
     $employee=fetchEmployeeForUser((int)$user['id']);
     if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
     echo json_encode(getTodayAttendanceState((int)$employee['id']));
 }
 
-function attendanceMonth() {
-    $month=$_GET['month']??newYorkNow()->format('Y-m');
-    if(!preg_match('/^\d{4}-\d{2}$/',$month)){
-        http_response_code(422);echo json_encode(['success'=>false,'message'=>'A valid month is required.']);return;
-    }
-    echo json_encode(fetchMonthlyAttendanceRoster($month));
-}
-function getAttendanceIpPermissions() {
-    $result=fetchAttendanceIpPermissions();http_response_code($result['success']?200:422);echo json_encode($result);
-}
-function updateEmployeeWfhPermission($employeeId,$user) {
-    $input=json_decode(file_get_contents('php://input'),true)?:[];
-    $allowed=filter_var($input['wfh_allowed']??null,FILTER_VALIDATE_BOOLEAN,FILTER_NULL_ON_FAILURE);
-    if($allowed===null){http_response_code(422);echo json_encode(['success'=>false,'message'=>'wfh_allowed must be true or false.']);return;}
-    $result=saveEmployeeWfhPermission($employeeId,$allowed,(int)$user['id']);
-    http_response_code($result['success']?200:(!empty($result['not_found'])?404:422));echo json_encode($result);
-}
 function attendanceClock($user, $action) {
     $input=json_decode(file_get_contents('php://input'),true)?:[];
     $employee=fetchEmployeeForUser((int)$user['id']);
@@ -268,7 +244,7 @@ function editAttendanceRecord($id,$user) {
     http_response_code($result['success']?200:422);echo json_encode($result);
 }
 
-// ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ ADD Employee
+// ➕ ADD Employee
 function createEmployee() {
     global $conn;
 
