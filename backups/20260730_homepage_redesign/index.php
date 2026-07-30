@@ -66,14 +66,6 @@ $_GET['route'] = trim($request, '/');
 */
 
 // ---------------------------------------------------------------------
-// PUBLIC HOME DASHBOARD AGGREGATES
-// URL: GET /home/summary
-// ---------------------------------------------------------------------
-if (strpos($request, '/home/summary') === 0) {
-    require_once __DIR__ . '/modules/home/routes.php';
-    exit;
-}
-// ---------------------------------------------------------------------
 // EMPLOYEE LOGIN (legacy route)
 // URL: POST /employee/login
 // ---------------------------------------------------------------------
@@ -138,11 +130,11 @@ elseif (strpos($request, '/benchsales') === 0) {
 //
 // Behavior:
 //   - Admin / Super Admin:
-//       â€¢ Can view all applications
-//       â€¢ Can filter by position_id (Bench Sales, Recruiters, etc.)
+//       • Can view all applications
+//       • Can filter by position_id (Bench Sales, Recruiters, etc.)
 //
 //   - Bench Sales / Recruiters / Other Users:
-//       â€¢ Can view only their own applications
+//       • Can view only their own applications
 //
 // Notes:
 //   - applications.employee_id stores users.id
