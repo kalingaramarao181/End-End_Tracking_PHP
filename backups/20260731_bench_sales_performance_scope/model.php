@@ -767,12 +767,7 @@ class ApplicationModel
         $params = [];
         $types = '';
 
-        // Respect the configured Bench Sales data scope. Users with ALL can
-        // review the complete team analytics; every other scope remains user-specific.
-        $dataScope = function_exists('permissionScope')
-            ? permissionScope('bench_sales')
-            : 'OWN';
-        if ($dataScope !== 'ALL') {
+        if (!in_array((int)($user['position_id'] ?? 0), [1, 2], true)) {
             $conditions[] = 'a.employee_id = ?';
             $params[] = (int)($user['id'] ?? 0);
             $types .= 'i';

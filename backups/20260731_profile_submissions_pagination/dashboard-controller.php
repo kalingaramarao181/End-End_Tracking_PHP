@@ -65,8 +65,7 @@ class DashboardController
         $this->respond($this->model->getProfilePerformance(
             authUser(),
             $candidateId,
-            $userId,
-            $_GET
+            $userId
         ));
     }
 

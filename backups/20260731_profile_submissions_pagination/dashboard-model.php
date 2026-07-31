@@ -218,7 +218,7 @@ class DashboardModel
         ];
     }
 
-    public function getProfilePerformance(array $user, $candidateId = null, $profileUserId = null, array $query = [])
+    public function getProfilePerformance(array $user, $candidateId = null, $profileUserId = null)
     {
         $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
         $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
@@ -297,41 +297,14 @@ class DashboardModel
         }
         $trend = array_reverse($this->fetchSubmissionRowsGeneric($trendStmt));
 
-        $page = max(1, (int)($query['page'] ?? 1));
-        $requestedLimit = (int)($query['limit'] ?? 10);
-        $limit = in_array($requestedLimit, [5, 10, 50, 100], true) ? $requestedLimit : 10;
-        $relatedId = !empty($query['related_id']) ? (int)$query['related_id'] : null;
-        $applicationWhere = $where;
-        $applicationParams = $params;
-        $applicationTypes = $types;
-
-        if ($relatedId) {
-            $applicationWhere .= $candidateId ? ' AND a.employee_id = ?' : ' AND a.candidate_id = ?';
-            $applicationParams[] = $relatedId;
-            $applicationTypes .= 'i';
-        }
-
-        $applicationCountSql = "SELECT COUNT(a.id) total $from $applicationWhere";
-        $applicationCountStmt = $this->prepareAndExecute($applicationCountSql, $applicationTypes, $applicationParams);
-        if (!$applicationCountStmt) {
-            return ['success' => false, 'message' => 'Unable to count profile submissions.'];
-        }
-        $totalApplications = (int)$applicationCountStmt->get_result()->fetch_assoc()['total'];
-        $applicationCountStmt->close();
-        $totalPages = max(1, (int)ceil($totalApplications / $limit));
-        $page = min($page, $totalPages);
-        $offset = ($page - 1) * $limit;
-
         $applicationSql = "SELECT a.id, a.candidate_id, a.employee_id, a.date_created,
                 $candidateName candidate_name, COALESCE(NULLIF(u.nick_name, ''), u.email) employee_name,
                 p.position_name employee_role, a.role, a.vendor, a.client, a.poc,
                 a.rate, a.candidate_loc, a.feedback, a.remarks, a.process_id,
                 CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
                     WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
-            $from $applicationWhere ORDER BY a.date_created DESC, a.id DESC LIMIT ? OFFSET ?";
-        $applicationParams[] = $limit;
-        $applicationParams[] = $offset;
-        $applicationStmt = $this->prepareAndExecute($applicationSql, $applicationTypes . 'ii', $applicationParams);
+            $from $where ORDER BY a.date_created DESC, a.id DESC LIMIT 100";
+        $applicationStmt = $this->prepareAndExecute($applicationSql, $types, $params);
         if (!$applicationStmt) {
             return ['success' => false, 'message' => 'Unable to load profile submissions.'];
         }
@@ -342,15 +315,10 @@ class DashboardModel
             'summary' => $summary,
             'breakdown' => $breakdown,
             'trend' => $trend,
-            'applications' => $applications,
-            'pagination' => [
-                'page' => $page,
-                'limit' => $limit,
-                'total_records' => $totalApplications,
-                'total_pages' => $totalPages
-            ]
+            'applications' => $applications
         ]];
     }
+
     public function getTableData($table, array $query, array $user)
     {
         $specs = $this->tableSpecs();

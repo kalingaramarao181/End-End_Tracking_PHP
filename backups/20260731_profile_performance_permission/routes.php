@@ -26,18 +26,8 @@ if ($method === 'GET' && $requestUri === '/dashboard/workforce-analytics') {
 }
 
 if ($method === 'GET' && $requestUri === '/dashboard/profile-performance') {
-    $user = authenticate();
-    $profileUserId = !empty($_GET['user_id']) ? (int)$_GET['user_id'] : null;
-
-    // A user may view only their own performance through My Profile without
-    // receiving access to the main Dashboard. Other profiles retain the
-    // existing Dashboard permission requirement.
-    if ($profileUserId && $profileUserId === (int)$user['id']) {
-        requirePermission('profile', 'can_view');
-    } else {
-        requirePermission('dashboard', 'can_view');
-    }
-
+    authenticate();
+    requirePermission('dashboard', 'can_view');
     (new DashboardController())->profilePerformance();
 }
 
