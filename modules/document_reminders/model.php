@@ -100,6 +100,16 @@ class DocumentReminderModel
         return ['success'=>true,'page'=>$page,'limit'=>$limit,'total_records'=>$total,'total_pages'=>(int)ceil($total/$limit),'data'=>$rows];
     }
 
+    public function exportReminders(array $filters)
+    {
+        $filters['limit']=100; $filters['page']=1; $rows=[];
+        do {
+            $result=$this->listReminders($filters);
+            $rows=array_merge($rows,$result['data']);
+            $filters['page']++;
+        } while($filters['page'] <= $result['total_pages']);
+        return $rows;
+    }
     public function updateReminder($id, array $data)
     {
         $existing=$this->getReminder($id); if(!$existing) return null;
@@ -120,12 +130,12 @@ class DocumentReminderModel
 
     public function disable($id)
     {
-        $stmt=$this->conn->prepare("UPDATE document_reminders SET status='Disabled' WHERE id=?"); $stmt->bind_param('i',$id); $stmt->execute(); return $stmt->affected_rows>0;
+        $stmt=$this->conn->prepare("UPDATE document_reminders SET status='Disabled', next_reminder_date=NULL WHERE id=?"); $stmt->bind_param('i',$id); $stmt->execute(); return $stmt->affected_rows>0;
     }
 
     public function dueReminders()
     {
-        $result=$this->conn->query($this->baseSelect()." WHERE dr.status='Pending' AND dr.next_reminder_date <= CURDATE() ORDER BY dr.next_reminder_date");
+        $result=$this->conn->query($this->baseSelect()." WHERE dr.status='Pending' AND dr.next_reminder_date <= CURDATE() AND NOT (dr.document_type='I-140' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(cd.document_details,'$.approved_date')),'') <> '') ORDER BY dr.next_reminder_date");
         $rows=[]; while($row=$result->fetch_assoc()) $rows[]=$this->hydrateReminder($row); return $rows;
     }
 
