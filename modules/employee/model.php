@@ -325,7 +325,13 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
     $leaveStmt->bind_param('iss',$employeeId,$endDate,$startDate);$leaveStmt->execute();
     $leaves=$leaveStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     return ['success'=>true,'summary'=>$summary,'trend'=>$trend,'calendar'=>$calendar,'holidays'=>$holidays,
-        'leaves'=>$leaves,'data'=>$records,'total'=>$total,'page'=>$page,'limit'=>$limit];
+        'leaves'=>$leaves,'data'=>$records,'total'=>$total,'page'=>$page,'limit'=>$limit,
+        'pagination'=>[
+            'total'=>$total,
+            'page'=>$page,
+            'limit'=>$limit,
+            'total_pages'=>max(1,(int)ceil($total/$limit)),
+        ]];
 }
 
 function attendanceSettings() {

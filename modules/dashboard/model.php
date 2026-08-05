@@ -540,6 +540,7 @@ class DashboardModel
         $applicationFrom = 'FROM application a
             LEFT JOIN candidate c ON c.id = a.candidate_id
             LEFT JOIN users u ON u.id = a.employee_id
+            LEFT JOIN employees e ON e.user_id = u.id
             LEFT JOIN positions p ON p.id = u.position_id';
         $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
             NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
@@ -548,7 +549,8 @@ class DashboardModel
 
         return [
             'submissions' => [
-                'select' => "a.id, a.date_created AS submission_date, $candidateName AS candidate,
+                'select' => "a.id, a.candidate_id, u.id AS recruiter_user_id,
+                    e.id AS recruiter_employee_id, a.date_created AS submission_date, $candidateName AS candidate,
                     u.nick_name AS recruiter, a.vendor, a.client, a.role AS technology,
                     $status AS status, a.rate, a.candidate_loc AS location,
                     a.interview_slot, a.feedback",
@@ -567,12 +569,14 @@ class DashboardModel
                 'default_sort' => 'submission_date'
             ],
             'active-candidates' => [
-                'select' => "c.id, c.name AS candidate, c.skills AS technology,
+                'select' => "c.id, c.id AS candidate_id, u.id AS recruiter_user_id,
+                    e.id AS recruiter_employee_id, c.name AS candidate, c.skills AS technology,
                     NULL AS experience, c.visa_status AS visa, c.current_location,
                     NULL AS preferred_location, u.nick_name AS recruiter,
                     NULL AS availability, c.status",
                 'from' => 'FROM candidate c
                     LEFT JOIN users u ON u.id = c.created_by
+                    LEFT JOIN employees e ON e.user_id = u.id
                     LEFT JOIN positions p ON p.id = u.position_id',
                 'conditions' => ["c.status = 'Active'"],
                 'owner_column' => 'c.created_by',
@@ -587,7 +591,8 @@ class DashboardModel
                 'default_sort' => 'candidate'
             ],
             'interviews' => [
-                'select' => "a.id, COALESCE(NULLIF(a.interview_slot, ''), a.date_created) AS interview_date,
+                'select' => "a.id, a.candidate_id, u.id AS recruiter_user_id,
+                    e.id AS recruiter_employee_id, COALESCE(NULLIF(a.interview_slot, ''), a.date_created) AS interview_date,
                     $candidateName AS candidate, a.client, a.vendor,
                     a.interview_mode AS interview_type, NULL AS round,
                     u.nick_name AS recruiter, $status AS status, a.feedback",
@@ -606,7 +611,8 @@ class DashboardModel
                 'default_sort' => 'interview_date'
             ],
             'placements' => [
-                'select' => "a.id, a.date_created AS placement_date, $candidateName AS candidate,
+                'select' => "a.id, a.candidate_id, u.id AS recruiter_user_id,
+                    e.id AS recruiter_employee_id, a.date_created AS placement_date, $candidateName AS candidate,
                     a.client, a.vendor, u.nick_name AS recruiter, a.candidate_loc AS location,
                     a.rate, NULL AS start_date, $status AS status",
                 'from' => $applicationFrom,
@@ -665,6 +671,7 @@ class DashboardModel
         while ($row = $result->fetch_assoc()) {
             foreach ([
                 'id', 'candidate_id', 'employee_id', 'related_id', 'process_id',
+                'recruiter_user_id', 'recruiter_employee_id',
                 'submissions', 'interviews', 'placements'
             ] as $field) {
                 if (array_key_exists($field, $row) && $row[$field] !== null) {
