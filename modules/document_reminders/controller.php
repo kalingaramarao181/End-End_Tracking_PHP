@@ -38,6 +38,13 @@ class DocumentReminderController
 
         [$reminderDate,$reminderReason]=$this->reminderPlan($type,$expiryDate,$appliedDate,$approvedDate,$priorityDate);
 
+        // Parse privileges (dollars)
+        $privileges=null;
+        if(!empty($_POST['privileges'])) {
+            $privilegesValue=(float)($_POST['privileges']??0);
+            if($privilegesValue>0) $privileges=$privilegesValue;
+        }
+
         $details=[
             'visa_type'=>$this->nullableText($_POST['visa_type']??$type),
             'visa_number'=>$this->nullableText($_POST['visa_number']??null),
@@ -56,7 +63,8 @@ class DocumentReminderController
             'reminder_date'=>$reminderDate,
             'reminder_reason'=>$reminderReason,
             'confidence'=>100,
-            'entry_method'=>'Manual'
+            'entry_method'=>'Manual',
+            'privileges'=>$privileges
         ];
 
         $file=$_FILES['document_file']??null;
@@ -70,7 +78,7 @@ class DocumentReminderController
             $this->model->saveDetails($documentId,$details);
             $reminder=null;
             if($reminderDate) {
-                $reminder=$this->model->createOrUpdateReminder($documentId,$reminderDate,$type);
+                $reminder=$this->model->createOrUpdateReminder($documentId,$reminderDate,$type,$privileges);
                 if($type==='I-140'&&$approvedDate) { $this->model->disable($reminder['id']); $reminder=$this->model->getReminder($reminder['id']); }
             }
             $this->respond(201,['success'=>true,'message'=>$reminder?'Document details saved and reminder created successfully.':'Document saved. A reminder date could not be calculated.','document'=>$this->model->getDocument($documentId),'reminder'=>$reminder]);
@@ -115,12 +123,13 @@ class DocumentReminderController
         echo '<Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#4F46E5" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D7DCE5"/></Borders></Style>';
         echo '<Style ss:ID="Left"><Alignment ss:Horizontal="Left" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>';
         echo '<Style ss:ID="Center"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>';
+        echo '<Style ss:ID="Currency"><Alignment ss:Horizontal="Right" ss:Vertical="Center"/><Number ss:Format="$#,##0.00"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>';
         echo '<Style ss:ID="Link"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Font ss:Color="#0563C1" ss:Underline="Single"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>';
         echo '</Styles><Worksheet ss:Name="Immigration Documents"><Table>';
-        foreach([150,210,210,110,105,80,105,90,120] as $width) echo '<Column ss:AutoFitWidth="0" ss:Width="'.$width.'"/>';
-        echo '<Row ss:Height="30"><Cell ss:MergeAcross="8" ss:StyleID="Title"><Data ss:Type="String">Filtered Immigration Documents</Data></Cell></Row>';
+        foreach([150,210,210,110,105,80,105,90,100,120] as $width) echo '<Column ss:AutoFitWidth="0" ss:Width="'.$width.'"/>';
+        echo '<Row ss:Height="30"><Cell ss:MergeAcross="9" ss:StyleID="Title"><Data ss:Type="String">Filtered Immigration Documents</Data></Cell></Row>';
         echo '<Row ss:Height="28">';
-        foreach(['Candidate','Email','Document Name','Document Type','Target Date','Days Left','Next Reminder','Status','Document Link'] as $heading) echo '<Cell ss:StyleID="Header"><Data ss:Type="String">'.$xml($heading).'</Data></Cell>';
+        foreach(['Candidate','Email','Document Name','Document Type','Target Date','Days Left','Next Reminder','Status','Prevailing Wages','Document Link'] as $heading) echo '<Cell ss:StyleID="Header"><Data ss:Type="String">'.$xml($heading).'</Data></Cell>';
         echo '</Row>';
         foreach($rows as $row){
             $path=ltrim((string)$row['document'],'/');
@@ -128,14 +137,16 @@ class DocumentReminderController
             $link=$scheme.'://'.($_SERVER['HTTP_HOST']??'localhost').'/E2E_Tracking/'.$path;
             $details=is_array($row['document_details']??null)?$row['document_details']:[];
             $name=$details['document_name']??basename($path);
+            $privileges=$row['privileges']??null;
             echo '<Row ss:Height="23">';
             foreach([$row['candidate_name'],$row['candidate_email'],$name] as $value) echo '<Cell ss:StyleID="Left"><Data ss:Type="String">'.$xml($value).'</Data></Cell>';
             foreach([$row['document_type'],$row['expiry_date'],$row['days_left'],$row['next_reminder_date']?:'-',$row['status']] as $value) echo '<Cell ss:StyleID="Center"><Data ss:Type="String">'.$xml($value).'</Data></Cell>';
+            echo $privileges?'<Cell ss:StyleID="Currency"><Data ss:Type="Number">'.$xml($privileges).'</Data></Cell>':'<Cell ss:StyleID="Center"><Data ss:Type="String">-</Data></Cell>';
             echo $link?'<Cell ss:StyleID="Link" ss:HRef="'.$xml($link).'"><Data ss:Type="String">Open Document</Data></Cell>':'<Cell ss:StyleID="Center"><Data ss:Type="String">-</Data></Cell>';
             echo '</Row>';
         }
         echo '</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>2</SplitHorizontal><TopRowBottomPane>2</TopRowBottomPane><ActivePane>2</ActivePane></WorksheetOptions>';
-        echo '<AutoFilter x:Range="R2C1:R'.(count($rows)+2).'C9" xmlns="urn:schemas-microsoft-com:office:excel"/>';
+        echo '<AutoFilter x:Range="R2C1:R'.(count($rows)+2).'C10" xmlns="urn:schemas-microsoft-com:office:excel"/>';
         echo '</Worksheet></Workbook>';
         exit;
     }
@@ -143,7 +154,7 @@ class DocumentReminderController
     public function show($id){ $row=$this->model->getReminder($id); $this->respond($row?200:404,$row?['success'=>true,'data'=>$row]:['success'=>false,'message'=>'Reminder not found.']); }
     public function update($id){ try{$row=$this->model->updateReminder($id,$this->input());$this->respond($row?200:404,$row?['success'=>true,'data'=>$row]:['success'=>false,'message'=>'Reminder not found.']);}catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);} }
     public function disable($id){ $ok=$this->model->disable($id); $this->respond($ok?200:404,['success'=>$ok,'message'=>$ok?'Reminder disabled.':'Reminder not found.']); }
-    public function createManual($documentId){ try{$data=$this->input();$expiry=ReminderDateService::normalizeDate($data['expiry_date']??null);if(!$expiry)throw new InvalidArgumentException('A target date using YYYY-MM-DD is required.');$document=$this->model->getDocument($documentId);if(!$document)throw new InvalidArgumentException('Document not found.');$details=$document['document_details']?:[];$details[$document['document_type']==='H1B'?'expiry_date':'reminder_date']=$expiry;$details['entry_method']='Manual';$details['confidence']=100;$this->model->saveDetails($documentId,$details);$row=$this->model->createOrUpdateReminder($documentId,$expiry);$this->respond(201,['success'=>true,'data'=>$row]);}catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);} }
+    public function createManual($documentId){ try{$data=$this->input();$expiry=ReminderDateService::normalizeDate($data['expiry_date']??null);if(!$expiry)throw new InvalidArgumentException('A target date using YYYY-MM-DD is required.');$document=$this->model->getDocument($documentId);if(!$document)throw new InvalidArgumentException('Document not found.');$details=$document['document_details']?:[];$details[$document['document_type']==='H1B'?'expiry_date':'reminder_date']=$expiry;$details['entry_method']='Manual';$details['confidence']=100;$privileges=$data['privileges']??null;if($privileges) $details['privileges']=$privileges;$this->model->saveDetails($documentId,$details);$row=$this->model->createOrUpdateReminder($documentId,$expiry,null,$privileges);$this->respond(201,['success'=>true,'data'=>$row]);}catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);} }
     public function sendNow($id){ $row=$this->model->getReminder($id); if(!$row)$this->respond(404,['success'=>false,'message'=>'Reminder not found.']); if($row['document_type']==='I-140'&&!empty($row['document_details']['approved_date'])) $this->respond(409,['success'=>false,'message'=>'Approved I-140 documents do not send email reminders.']); try{(new ReminderEmailService())->send($row);$this->respond(200,['success'=>true,'message'=>'Reminder sent. Future schedule was not changed.']);}catch(Throwable $e){$this->respond(502,['success'=>false,'message'=>$e->getMessage()]);} }
     public function dashboard(){ $this->respond(200,['success'=>true,'data'=>$this->model->dashboard()]); }
 }

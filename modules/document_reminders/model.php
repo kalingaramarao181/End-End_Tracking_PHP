@@ -46,7 +46,7 @@ class DocumentReminderModel
         return $this->hydrateDocument($row ?: null);
     }
 
-    public function createOrUpdateReminder($documentId, $expiryDate, $type = null)
+    public function createOrUpdateReminder($documentId, $expiryDate, $type = null, $privileges = null)
     {
         $document = $this->getDocument($documentId);
         if (!$document) throw new RuntimeException('Document not found.');
@@ -56,9 +56,9 @@ class DocumentReminderModel
         $next = ReminderDateService::initialReminderDate($normalized);
         $status = $next ? 'Pending' : 'Expired';
         $documentType = $type ?: $document['document_type'];
-        $sql = 'INSERT INTO document_reminders (candidate_id, document_id, document_type, expiry_date, next_reminder_date, status) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE document_type = VALUES(document_type), expiry_date = VALUES(expiry_date), next_reminder_date = VALUES(next_reminder_date), status = VALUES(status)';
+        $sql = 'INSERT INTO document_reminders (candidate_id, document_id, document_type, expiry_date, next_reminder_date, status, privileges) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE document_type = VALUES(document_type), expiry_date = VALUES(expiry_date), next_reminder_date = VALUES(next_reminder_date), status = VALUES(status), privileges = VALUES(privileges)';
         $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param('iissss', $document['candidate_id'], $documentId, $documentType, $normalized, $next, $status);
+        $stmt->bind_param('iissssd', $document['candidate_id'], $documentId, $documentType, $normalized, $next, $status, $privileges);
         if (!$stmt->execute()) throw new RuntimeException($stmt->error);
         return $this->getReminderByDocument($documentId);
     }
@@ -119,11 +119,13 @@ class DocumentReminderModel
             ? ReminderDateService::normalizeDate($data['next_reminder_date'])
             : (array_key_exists('expiry_date',$data) ? ReminderDateService::initialReminderDate($expiry) : $existing['next_reminder_date']);
         $status=$data['status']??$existing['status'];
+        $privileges=$data['privileges']??$existing['privileges'];
         if(!in_array($status,['Pending','Completed','Expired','Disabled'],true)) throw new InvalidArgumentException('Invalid reminder status.');
-        $stmt=$this->conn->prepare('UPDATE document_reminders SET expiry_date=?, next_reminder_date=?, status=? WHERE id=?');
-        $stmt->bind_param('sssi',$expiry,$next,$status,$id); if(!$stmt->execute()) throw new RuntimeException($stmt->error);
+        $stmt=$this->conn->prepare('UPDATE document_reminders SET expiry_date=?, next_reminder_date=?, status=?, privileges=? WHERE id=?');
+        $stmt->bind_param('sssdi',$expiry,$next,$status,$privileges,$id); if(!$stmt->execute()) throw new RuntimeException($stmt->error);
         $document=$this->getDocument($existing['document_id']); $details=$document['document_details']?:[];
         $details[$document['document_type']==='H1B'?'expiry_date':'reminder_date']=$expiry;
+        if($privileges) $details['privileges']=$privileges;
         $this->saveDetails($existing['document_id'],$details);
         return $this->getReminder($id);
     }
