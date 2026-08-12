@@ -763,6 +763,9 @@ class ApplicationModel
     {
         $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
             NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
+        $activityDate = "CASE WHEN a.process_id = 2 THEN COALESCE(a.interview_updated_at, a.date_created)
+            WHEN a.process_id = 3 THEN COALESCE(a.placement_updated_at, a.date_created)
+            ELSE a.date_created END";
         $conditions = ['u.position_id = 3'];
         $params = [];
         $types = '';
@@ -782,8 +785,8 @@ class ApplicationModel
             $value = trim((string)($query[$field] ?? ''));
             if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
                 $conditions[] = $operator === '>='
-                    ? 'a.date_created >= ?'
-                    : 'a.date_created < DATE_ADD(?, INTERVAL 1 DAY)';
+                    ? "$activityDate >= ?"
+                    : "$activityDate < DATE_ADD(?, INTERVAL 1 DAY)";
                 $params[] = $value;
                 $types .= 's';
             }
@@ -848,7 +851,7 @@ class ApplicationModel
                 COALESCE(NULLIF(c.skills, ''), a.role) technology,
                 c.email, c.phone, c.visa_status, c.current_location,
                 COUNT(a.id) submissions, SUM(a.process_id = 2) interviews,
-                SUM(a.process_id = 3) placements, MAX(a.date_created) last_submission
+                SUM(a.process_id = 3) placements, MAX($activityDate) last_submission
             $from $where
             GROUP BY a.candidate_id, candidate_name, technology, c.email, c.phone,
                 c.visa_status, c.current_location
@@ -859,9 +862,9 @@ class ApplicationModel
         }
         $candidateRows = $this->fetchPerformanceRows($candidateStmt);
 
-        $trendSql = "SELECT DATE(a.date_created) submission_date, COUNT(a.id) submissions,
+        $trendSql = "SELECT DATE($activityDate) submission_date, COUNT(a.id) submissions,
                 SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements
-            $from $where GROUP BY DATE(a.date_created) ORDER BY submission_date";
+            $from $where GROUP BY DATE($activityDate) ORDER BY submission_date";
         $trendStmt = $this->executePerformanceQuery($trendSql, $types, $params);
         if (!$trendStmt) {
             return ['success' => false, 'message' => 'Unable to load performance trend.'];
@@ -870,11 +873,13 @@ class ApplicationModel
 
         $applicationSql = "SELECT a.id, a.candidate_id, a.employee_id,
                 $candidateName candidate_name, u.nick_name employee_name,
-                a.date_created, a.role, a.vendor, a.poc, a.client, a.rate,
+                a.date_created, $activityDate AS activity_date,
+                a.interview_updated_at, a.placement_updated_at,
+                a.role, a.vendor, a.poc, a.client, a.rate,
                 a.candidate_loc, a.feedback, a.process_id,
                 CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
                     WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
-            $from $where ORDER BY a.date_created DESC, a.id DESC LIMIT 100";
+            $from $where ORDER BY activity_date DESC, a.id DESC LIMIT 100";
         $applicationStmt = $this->executePerformanceQuery($applicationSql, $types, $params);
 
         if (!$applicationStmt) {
@@ -951,6 +956,8 @@ public function updateProcess($id, $processId, $interviewSlot = null, $feedback 
             process_id = ?,
             interview_slot = COALESCE(?, interview_slot),
             feedback = COALESCE(?, feedback),
+            interview_updated_at = CASE WHEN ? = 2 THEN NOW() ELSE interview_updated_at END,
+            placement_updated_at = CASE WHEN ? = 3 THEN NOW() ELSE placement_updated_at END,
             date = NOW()
         WHERE id = ?
     ");
@@ -963,7 +970,7 @@ public function updateProcess($id, $processId, $interviewSlot = null, $feedback 
         ];
     }
 
-    $stmt->bind_param("issi", $processId, $interviewSlot, $feedback, $id);
+    $stmt->bind_param("issiii", $processId, $interviewSlot, $feedback, $processId, $processId, $id);
 
     if (!$stmt->execute()) {
         return [

@@ -25,7 +25,7 @@ class DashboardModel
             'open_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status='Open'",
             'closed_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status<>'Open'",
             'submissions_today' => "SELECT COUNT(*) value FROM application WHERE DATE(date_created)=CURDATE()",
-            'interviews_today' => "SELECT COUNT(*) value FROM application WHERE process_id=2 AND DATE(COALESCE(NULLIF(interview_slot,''),date_created))=CURDATE()",
+            'interviews_today' => "SELECT COUNT(*) value FROM application WHERE process_id=2 AND DATE(COALESCE(interview_updated_at,date_created))=CURDATE()",
             'placements' => "SELECT COUNT(*) value FROM application WHERE process_id=3",
             'attendance_today' => "SELECT COUNT(DISTINCT a.employee_id) value FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()",
             'absent_today' => "SELECT GREATEST((SELECT COUNT(*) FROM employees WHERE user_id IS NOT NULL)-(SELECT COUNT(DISTINCT a.employee_id) FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()),0) value",
@@ -106,6 +106,10 @@ class DashboardModel
             $periodLabel = 'This Week';
             $previousPeriodLabel = 'Last Week';
         }
+        $currentInterviewPeriod = str_replace('a.date_created', 'a.interview_updated_at', $currentPeriod);
+        $previousInterviewPeriod = str_replace('a.date_created', 'a.interview_updated_at', $previousPeriod);
+        $currentPlacementPeriod = str_replace('a.date_created', 'a.placement_updated_at', $currentPeriod);
+        $previousPlacementPeriod = str_replace('a.date_created', 'a.placement_updated_at', $previousPeriod);
 
         $employeeSql = "SELECT
                 u.id AS employee_id,
@@ -113,14 +117,14 @@ class DashboardModel
                 p.position_name AS employee_role,
                 SUM(CASE WHEN $currentPeriod THEN 1 ELSE 0 END) AS this_week_submissions,
                 SUM(CASE WHEN $previousPeriod THEN 1 ELSE 0 END) AS last_week_submissions,
-                SUM(CASE WHEN a.process_id = 2 AND $currentPeriod THEN 1 ELSE 0 END) AS this_week_interviews,
-                SUM(CASE WHEN a.process_id = 2 AND $previousPeriod THEN 1 ELSE 0 END) AS last_week_interviews,
-                SUM(CASE WHEN a.process_id = 3 AND $currentPeriod THEN 1 ELSE 0 END) AS this_week_placements,
-                SUM(CASE WHEN a.process_id = 3 AND $previousPeriod THEN 1 ELSE 0 END) AS last_week_placements
+                SUM(CASE WHEN a.process_id = 2 AND $currentInterviewPeriod THEN 1 ELSE 0 END) AS this_week_interviews,
+                SUM(CASE WHEN a.process_id = 2 AND $previousInterviewPeriod THEN 1 ELSE 0 END) AS last_week_interviews,
+                SUM(CASE WHEN a.process_id = 3 AND $currentPlacementPeriod THEN 1 ELSE 0 END) AS this_week_placements,
+                SUM(CASE WHEN a.process_id = 3 AND $previousPlacementPeriod THEN 1 ELSE 0 END) AS last_week_placements
             FROM users u
             LEFT JOIN application a ON a.employee_id = u.id
                 AND (
-                    $currentPeriod OR $previousPeriod
+                    $currentPeriod OR $previousPeriod OR $currentInterviewPeriod OR $previousInterviewPeriod OR $currentPlacementPeriod OR $previousPlacementPeriod
                 )
             LEFT JOIN positions p ON p.id = u.position_id
             WHERE u.status = 'Active' $employeeScopeSql
@@ -164,7 +168,10 @@ class DashboardModel
             COALESCE(NULLIF(c.visa_status, ''), a.visastatus) AS visa_status,
             c.current_location, a.candidate_loc, a.vendor, a.poc AS vendor_contact,
             a.email AS vendor_email, a.contact, a.client, a.role, a.rate,
-            a.feedback, a.remarks, a.interview_slot, a.interview_mode, a.process_id,
+            a.feedback, a.remarks, a.interview_slot, a.interview_updated_at, a.placement_updated_at,
+            CASE WHEN a.process_id = 2 THEN COALESCE(a.interview_updated_at, a.date_created)
+                WHEN a.process_id = 3 THEN COALESCE(a.placement_updated_at, a.date_created)
+                ELSE a.date_created END AS activity_date, a.interview_mode, a.process_id,
             CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview' WHEN 3 THEN 'Placed' ELSE 'Unknown' END AS status,
             COALESCE(NULLIF(u.nick_name, ''), u.email) AS employee_name";
         $submissionFrom = " FROM application a
@@ -184,8 +191,10 @@ class DashboardModel
         if ($selectedEmployeeId) {
             $selectedSql = "SELECT $submissionSelect $submissionFrom
                 WHERE a.employee_id = ?
-                AND $currentPeriod
-                ORDER BY a.date_created DESC, a.id DESC LIMIT 50";
+                AND ($currentPeriod
+                    OR (a.process_id = 2 AND $currentInterviewPeriod)
+                    OR (a.process_id = 3 AND $currentPlacementPeriod))
+                ORDER BY activity_date DESC, a.id DESC LIMIT 50";
             $selectedStmt = $this->prepareAndExecute($selectedSql, 'i', [$selectedEmployeeId]);
             if (!$selectedStmt) {
                 return ['success' => false, 'message' => 'Unable to load employee candidate details.'];
@@ -592,7 +601,7 @@ class DashboardModel
             ],
             'interviews' => [
                 'select' => "a.id, a.candidate_id, u.id AS recruiter_user_id,
-                    e.id AS recruiter_employee_id, COALESCE(NULLIF(a.interview_slot, ''), a.date_created) AS interview_date,
+                    e.id AS recruiter_employee_id, COALESCE(a.interview_updated_at, a.date_created) AS interview_date,
                     $candidateName AS candidate, a.client, a.vendor,
                     a.interview_mode AS interview_type, NULL AS round,
                     u.nick_name AS recruiter, $status AS status, a.feedback",
@@ -600,10 +609,10 @@ class DashboardModel
                 'conditions' => ['a.process_id = 2'],
                 'owner_column' => 'a.employee_id',
                 'count_column' => 'a.id',
-                'date_column' => 'a.date_created',
+                'date_column' => 'COALESCE(a.interview_updated_at, a.date_created)',
                 'search_columns' => [$candidateName, 'u.nick_name', 'a.vendor', 'a.client', 'a.role'],
                 'sorts' => [
-                    'interview_date' => 'a.date_created', 'candidate' => $candidateName,
+                    'interview_date' => 'COALESCE(a.interview_updated_at, a.date_created)', 'candidate' => $candidateName,
                     'client' => 'a.client', 'vendor' => 'a.vendor',
                     'interview_type' => 'a.interview_mode', 'recruiter' => 'u.nick_name',
                     'status' => 'a.process_id', 'feedback' => 'a.feedback'
@@ -612,17 +621,17 @@ class DashboardModel
             ],
             'placements' => [
                 'select' => "a.id, a.candidate_id, u.id AS recruiter_user_id,
-                    e.id AS recruiter_employee_id, a.date_created AS placement_date, $candidateName AS candidate,
+                    e.id AS recruiter_employee_id, COALESCE(a.placement_updated_at, a.date_created) AS placement_date, $candidateName AS candidate,
                     a.client, a.vendor, u.nick_name AS recruiter, a.candidate_loc AS location,
                     a.rate, NULL AS start_date, $status AS status",
                 'from' => $applicationFrom,
                 'conditions' => ['a.process_id = 3'],
                 'owner_column' => 'a.employee_id',
                 'count_column' => 'a.id',
-                'date_column' => 'a.date_created',
+                'date_column' => 'COALESCE(a.placement_updated_at, a.date_created)',
                 'search_columns' => [$candidateName, 'u.nick_name', 'a.vendor', 'a.client', 'a.role'],
                 'sorts' => [
-                    'placement_date' => 'a.date_created', 'candidate' => $candidateName,
+                    'placement_date' => 'COALESCE(a.placement_updated_at, a.date_created)', 'candidate' => $candidateName,
                     'client' => 'a.client', 'vendor' => 'a.vendor', 'recruiter' => 'u.nick_name',
                     'location' => 'a.candidate_loc', 'rate' => 'a.rate', 'status' => 'a.process_id'
                 ],
