@@ -99,6 +99,11 @@ elseif (strpos($request, '/api/test') === 0) {
 // AUTH ROUTES
 // URL: POST /api/auth/login
 // ---------------------------------------------------------------------
+elseif (strpos($request, '/w2') === 0) {
+    require_once __DIR__ . '/modules/w2/routes.php';
+    exit;
+}
+// AUTH ROUTES
 elseif ( strpos($request, '/auth') === 0
 ) {
     require_once __DIR__ . '/modules/auth/routes.php';
@@ -140,11 +145,11 @@ elseif (strpos($request, '/benchsales') === 0) {
 //
 // Behavior:
 //   - Admin / Super Admin:
-//       â€¢ Can view all applications
-//       â€¢ Can filter by position_id (Bench Sales, Recruiters, etc.)
+//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can view all applications
+//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can filter by position_id (Bench Sales, Recruiters, etc.)
 //
 //   - Bench Sales / Recruiters / Other Users:
-//       â€¢ Can view only their own applications
+//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can view only their own applications
 //
 // Notes:
 //   - applications.employee_id stores users.id
@@ -281,3 +286,4 @@ echo json_encode([
     'path' => $request
 ]);
 exit;
+

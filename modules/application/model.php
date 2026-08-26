@@ -761,6 +761,9 @@ class ApplicationModel
 
     public function getPerformanceDashboard(array $query = [], array $user = [])
     {
+        $applicationPage = max(1, (int)($query['application_page'] ?? 1));
+        $applicationLimit = min(100, max(5, (int)($query['application_limit'] ?? 10)));
+        $applicationOffset = ($applicationPage - 1) * $applicationLimit;
         $candidateName = "COALESCE(c.name, NULLIF(a.candidate_name, ''), NULLIF(a.cname, ''),
             NULLIF(TRIM(CONCAT_WS(' ', a.firstname, a.middlename, a.lastname)), ''))";
         $activityDate = "CASE WHEN a.process_id = 2 THEN COALESCE(a.interview_updated_at, a.date_created)
@@ -879,8 +882,11 @@ class ApplicationModel
                 a.candidate_loc, a.feedback, a.process_id,
                 CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
                     WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
-            $from $where ORDER BY activity_date DESC, a.id DESC LIMIT 100";
-        $applicationStmt = $this->executePerformanceQuery($applicationSql, $types, $params);
+            $from $where ORDER BY activity_date DESC, a.id DESC LIMIT ? OFFSET ?";
+        $applicationParams = $params;
+        $applicationParams[] = $applicationLimit;
+        $applicationParams[] = $applicationOffset;
+        $applicationStmt = $this->executePerformanceQuery($applicationSql, $types . 'ii', $applicationParams);
 
         if (!$applicationStmt) {
             return ['success' => false, 'message' => 'Unable to load submission details.'];
@@ -895,6 +901,12 @@ class ApplicationModel
                 'candidates' => $candidateRows,
                 'trend' => $trendRows,
                 'applications' => $applicationRows,
+                'applications_pagination' => [
+                    'page' => $applicationPage,
+                    'limit' => $applicationLimit,
+                    'total' => $summary['total_submissions'],
+                    'total_pages' => max(1, (int)ceil($summary['total_submissions'] / $applicationLimit))
+                ],
                 'filters' => [
                     'start_date' => $query['start_date'] ?? null,
                     'end_date' => $query['end_date'] ?? null,
