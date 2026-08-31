@@ -16,7 +16,7 @@ if (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], $allowed
 
 header('Content-Type: application/json');
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
 header("Access-Control-Allow-Credentials: true");
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -116,6 +116,11 @@ elseif ( strpos($request, '/auth') === 0
 //   GET  /api/user/list
 //   PUT  /api/user/update/{id}
 // ---------------------------------------------------------------------
+elseif (strpos($request, '/chat') === 0) {
+    require_once __DIR__ . '/modules/chat/routes.php';
+    exit;
+}
+
 elseif (strpos($request, '/user') === 0) {
     require_once __DIR__ . '/modules/user/routes.php';
     exit;
@@ -145,11 +150,11 @@ elseif (strpos($request, '/benchsales') === 0) {
 //
 // Behavior:
 //   - Admin / Super Admin:
-//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can view all applications
-//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can filter by position_id (Bench Sales, Recruiters, etc.)
+//       * Can view all applications
+//       * Can filter by position_id (Bench Sales, Recruiters, etc.)
 //
 //   - Bench Sales / Recruiters / Other Users:
-//       ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Can view only their own applications
+//       * Can view only their own applications
 //
 // Notes:
 //   - applications.employee_id stores users.id

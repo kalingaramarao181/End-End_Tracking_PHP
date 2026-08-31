@@ -25,7 +25,7 @@ class DashboardModel
             'open_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status='Open'",
             'closed_jobs' => "SELECT COUNT(*) value FROM jobs WHERE status<>'Open'",
             'submissions_today' => "SELECT COUNT(*) value FROM application WHERE DATE(date_created)=CURDATE()",
-            'interviews_today' => "SELECT COUNT(*) value FROM application WHERE process_id=2 AND DATE(COALESCE(interview_updated_at,date_created))=CURDATE()",
+            'interviews_today' => "SELECT COUNT(*) value FROM application_process_history WHERE event_type='interview' AND DATE(created_at)=CURDATE()",
             'placements' => "SELECT COUNT(*) value FROM application WHERE process_id=3",
             'attendance_today' => "SELECT COUNT(DISTINCT a.employee_id) value FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()",
             'absent_today' => "SELECT GREATEST((SELECT COUNT(*) FROM employees WHERE user_id IS NOT NULL)-(SELECT COUNT(DISTINCT a.employee_id) FROM attendance a INNER JOIN employees e ON e.id=a.employee_id WHERE e.user_id IS NOT NULL AND a.date=CURDATE()),0) value",
@@ -106,8 +106,8 @@ class DashboardModel
             $periodLabel = 'This Week';
             $previousPeriodLabel = 'Last Week';
         }
-        $currentInterviewPeriod = str_replace('a.date_created', 'a.interview_updated_at', $currentPeriod);
-        $previousInterviewPeriod = str_replace('a.date_created', 'a.interview_updated_at', $previousPeriod);
+        $currentInterviewPeriod = str_replace('a.date_created', 'h.created_at', $currentPeriod);
+        $previousInterviewPeriod = str_replace('a.date_created', 'h.created_at', $previousPeriod);
         $currentPlacementPeriod = str_replace('a.date_created', 'a.placement_updated_at', $currentPeriod);
         $previousPlacementPeriod = str_replace('a.date_created', 'a.placement_updated_at', $previousPeriod);
 
@@ -117,14 +117,14 @@ class DashboardModel
                 p.position_name AS employee_role,
                 SUM(CASE WHEN $currentPeriod THEN 1 ELSE 0 END) AS this_week_submissions,
                 SUM(CASE WHEN $previousPeriod THEN 1 ELSE 0 END) AS last_week_submissions,
-                SUM(CASE WHEN a.process_id = 2 AND $currentInterviewPeriod THEN 1 ELSE 0 END) AS this_week_interviews,
-                SUM(CASE WHEN a.process_id = 2 AND $previousInterviewPeriod THEN 1 ELSE 0 END) AS last_week_interviews,
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND $currentInterviewPeriod)) AS this_week_interviews,
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND $previousInterviewPeriod)) AS last_week_interviews,
                 SUM(CASE WHEN a.process_id = 3 AND $currentPlacementPeriod THEN 1 ELSE 0 END) AS this_week_placements,
                 SUM(CASE WHEN a.process_id = 3 AND $previousPlacementPeriod THEN 1 ELSE 0 END) AS last_week_placements
             FROM users u
             LEFT JOIN application a ON a.employee_id = u.id
                 AND (
-                    $currentPeriod OR $previousPeriod OR $currentInterviewPeriod OR $previousInterviewPeriod OR $currentPlacementPeriod OR $previousPlacementPeriod
+                    $currentPeriod OR $previousPeriod OR EXISTS (SELECT 1 FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND ($currentInterviewPeriod OR $previousInterviewPeriod)) OR $currentPlacementPeriod OR $previousPlacementPeriod
                 )
             LEFT JOIN positions p ON p.id = u.position_id
             WHERE u.status = 'Active' $employeeScopeSql
@@ -192,7 +192,7 @@ class DashboardModel
             $selectedSql = "SELECT $submissionSelect $submissionFrom
                 WHERE a.employee_id = ?
                 AND ($currentPeriod
-                    OR (a.process_id = 2 AND $currentInterviewPeriod)
+                    OR EXISTS (SELECT 1 FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND $currentInterviewPeriod)
                     OR (a.process_id = 3 AND $currentPlacementPeriod))
                 ORDER BY activity_date DESC, a.id DESC LIMIT 50";
             $selectedStmt = $this->prepareAndExecute($selectedSql, 'i', [$selectedEmployeeId]);
@@ -262,7 +262,7 @@ class DashboardModel
             LEFT JOIN positions p ON p.id = u.position_id";
 
         $summarySql = "SELECT COUNT(a.id) submissions,
-                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements,
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview')) interviews, SUM(a.process_id = 3) placements,
                 COUNT(DISTINCT a.employee_id) users,
                 COUNT(DISTINCT COALESCE(a.candidate_id, CONCAT('legacy-', $candidateName))) candidates,
                 MIN(a.date_created) first_submission, MAX(a.date_created) latest_submission
@@ -286,7 +286,7 @@ class DashboardModel
             ? 'a.employee_id, u.nick_name, u.email, p.position_name'
             : "a.candidate_id, related_name, related_subtitle";
         $breakdownSql = "SELECT $groupSelect, COUNT(a.id) submissions,
-                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements,
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview')) interviews, SUM(a.process_id = 3) placements,
                 MAX(a.date_created) latest_submission
             $from $where GROUP BY $groupBy
             ORDER BY submissions DESC, latest_submission DESC LIMIT 30";
@@ -297,7 +297,7 @@ class DashboardModel
         $breakdown = $this->fetchSubmissionRowsGeneric($breakdownStmt);
 
         $trendSql = "SELECT DATE(a.date_created) activity_date, COUNT(a.id) submissions,
-                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview')) interviews, SUM(a.process_id = 3) placements
             $from $where GROUP BY DATE(a.date_created)
             ORDER BY activity_date DESC LIMIT 60";
         $trendStmt = $this->prepareAndExecute($trendSql, $types, $params);

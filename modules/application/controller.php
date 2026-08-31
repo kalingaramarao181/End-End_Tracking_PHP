@@ -553,11 +553,16 @@ class ApplicationController
             $interviewSlot = $interviewDate . ' ' . $startTime . ' - ' . $endTime;
         }
 
+        if ($processId === 3) {
+            $feedback = trim((string)($data['feedback'] ?? '')) ?: 'Candidate marked as placed.';
+        }
+
         $result = $this->applicationModel->updateProcess(
             $id,
             $processId,
             $interviewSlot,
-            $feedback
+            $feedback,
+            (int)(authUser()['id'] ?? 0)
         );
 
         if (!$result['success']) {

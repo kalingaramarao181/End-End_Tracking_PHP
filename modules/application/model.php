@@ -130,7 +130,7 @@ class ApplicationModel
         $sql = "
             SELECT
                 COUNT(a.id) AS submissions,
-                COUNT(CASE WHEN a.process_id = 2 THEN 1 END) AS interviews,
+                SUM((SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview')) AS interviews,
                 COUNT(CASE WHEN a.process_id = 3 THEN 1 END) AS placements
             FROM application a
             LEFT JOIN users u
@@ -421,9 +421,19 @@ class ApplicationModel
             ];
         }
 
+        $application = $result->fetch_assoc();
+        $historyStmt = $this->conn->prepare("SELECT h.id,h.event_type,h.round_number,h.interview_slot,h.feedback,h.created_by,h.created_at,u.nick_name created_by_name FROM application_process_history h LEFT JOIN users u ON u.id=h.created_by WHERE h.application_id=? ORDER BY h.created_at,h.id");
+        $history = [];
+        if ($historyStmt) {
+            $historyStmt->bind_param('i', $id);
+            $historyStmt->execute();
+            $history = $historyStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+            $historyStmt->close();
+        }
+        $application['process_history'] = $history;
         return [
             'success' => true,
-            'data' => $result->fetch_assoc()
+            'data' => $application
         ];
     }
 
@@ -787,13 +797,22 @@ class ApplicationModel
         foreach (['start_date' => '>=', 'end_date' => '<='] as $field => $operator) {
             $value = trim((string)($query[$field] ?? ''));
             if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
-                $conditions[] = $operator === '>='
-                    ? "$activityDate >= ?"
-                    : "$activityDate < DATE_ADD(?, INTERVAL 1 DAY)";
-                $params[] = $value;
-                $types .= 's';
+                $dateValue = $this->conn->real_escape_string($value);
+                $activityCondition = $operator === '>='
+                    ? "$activityDate >= '$dateValue'"
+                    : "$activityDate < DATE_ADD('$dateValue', INTERVAL 1 DAY)";
+                $historyCondition = $operator === '>='
+                    ? "h.created_at >= '$dateValue'"
+                    : "h.created_at < DATE_ADD('$dateValue', INTERVAL 1 DAY)";
+                $conditions[] = "($activityCondition OR EXISTS (SELECT 1 FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND $historyCondition))";
+                $interviewHistoryDateConditions[] = $historyCondition;
             }
         }
+
+        $interviewHistoryDateSql = $interviewHistoryDateConditions
+            ? ' AND ' . implode(' AND ', $interviewHistoryDateConditions)
+            : '';
+        $interviewCount = "(SELECT COUNT(*) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview'$interviewHistoryDateSql)";
 
         $search = trim((string)($query['search'] ?? ''));
         if ($search !== '') {
@@ -822,7 +841,7 @@ class ApplicationModel
             INNER JOIN users u ON u.id = a.employee_id";
 
         $summarySql = "SELECT COUNT(a.id) total_submissions,
-                SUM(a.process_id = 2) interviews,
+                SUM($interviewCount) interviews,
                 SUM(a.process_id = 3) placements,
                 COUNT(DISTINCT a.employee_id) active_employees,
                 COUNT(DISTINCT COALESCE(a.candidate_id, CONCAT('legacy-', $candidateName))) unique_candidates
@@ -838,7 +857,7 @@ class ApplicationModel
         }
 
         $employeeSql = "SELECT a.employee_id AS user_id, u.nick_name AS employee_name,
-                COUNT(a.id) submissions, SUM(a.process_id = 2) interviews,
+                COUNT(a.id) submissions, SUM($interviewCount) interviews,
                 SUM(a.process_id = 3) placements,
                 ROUND((SUM(a.process_id = 3) / NULLIF(COUNT(a.id), 0)) * 100, 1) placement_rate
             $from $where
@@ -853,7 +872,7 @@ class ApplicationModel
         $candidateSql = "SELECT a.candidate_id, $candidateName candidate_name,
                 COALESCE(NULLIF(c.skills, ''), a.role) technology,
                 c.email, c.phone, c.visa_status, c.current_location,
-                COUNT(a.id) submissions, SUM(a.process_id = 2) interviews,
+                COUNT(a.id) submissions, SUM($interviewCount) interviews,
                 SUM(a.process_id = 3) placements, MAX($activityDate) last_submission
             $from $where
             GROUP BY a.candidate_id, candidate_name, technology, c.email, c.phone,
@@ -866,7 +885,7 @@ class ApplicationModel
         $candidateRows = $this->fetchPerformanceRows($candidateStmt);
 
         $trendSql = "SELECT DATE($activityDate) submission_date, COUNT(a.id) submissions,
-                SUM(a.process_id = 2) interviews, SUM(a.process_id = 3) placements
+                SUM($interviewCount) interviews, SUM(a.process_id = 3) placements
             $from $where GROUP BY DATE($activityDate) ORDER BY submission_date";
         $trendStmt = $this->executePerformanceQuery($trendSql, $types, $params);
         if (!$trendStmt) {
@@ -960,52 +979,45 @@ class ApplicationModel
 |--------------------------------------------------------------------------
 */
 
-public function updateProcess($id, $processId, $interviewSlot = null, $feedback = null)
+public function updateProcess($id, $processId, $interviewSlot = null, $feedback = null, $createdBy = null)
 {
-    $stmt = $this->conn->prepare("
-        UPDATE application
-        SET
-            process_id = ?,
-            interview_slot = COALESCE(?, interview_slot),
-            feedback = COALESCE(?, feedback),
-            interview_updated_at = CASE WHEN ? = 2 THEN NOW() ELSE interview_updated_at END,
-            placement_updated_at = CASE WHEN ? = 3 THEN NOW() ELSE placement_updated_at END,
-            date = NOW()
-        WHERE id = ?
-    ");
+    $this->conn->begin_transaction();
+    try {
+        $lock = $this->conn->prepare('SELECT id FROM application WHERE id=? FOR UPDATE');
+        $lock->bind_param('i', $id);
+        $lock->execute();
+        if (!$lock->get_result()->fetch_assoc()) {
+            throw new InvalidArgumentException('Application not found.');
+        }
 
-    if (!$stmt) {
-        return [
-            "success" => false,
-            "message" => "Prepare failed.",
-            "error" => $this->conn->error
-        ];
+        $roundNumber = null;
+        if ($processId === 2) {
+            $roundQuery = $this->conn->prepare("SELECT COALESCE(MAX(round_number),0)+1 next_round FROM application_process_history WHERE application_id=? AND event_type='interview'");
+            $roundQuery->bind_param('i', $id);
+            $roundQuery->execute();
+            $roundNumber = (int)$roundQuery->get_result()->fetch_assoc()['next_round'];
+            $eventType = 'interview';
+            $history = $this->conn->prepare('INSERT INTO application_process_history(application_id,event_type,round_number,interview_slot,feedback,created_by) VALUES(?,?,?,?,?,?)');
+            $history->bind_param('isissi', $id, $eventType, $roundNumber, $interviewSlot, $feedback, $createdBy);
+            $history->execute();
+        } elseif ($processId === 3) {
+            $eventType = 'placed';
+            $placementRound = 0;
+            $history = $this->conn->prepare('INSERT INTO application_process_history(application_id,event_type,round_number,feedback,created_by) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE feedback=VALUES(feedback),created_by=VALUES(created_by),created_at=NOW()');
+            $history->bind_param('isisi', $id, $eventType, $placementRound, $feedback, $createdBy);
+            $history->execute();
+        }
+
+        $stmt = $this->conn->prepare("UPDATE application SET process_id=?,interview_slot=COALESCE(?,interview_slot),feedback=COALESCE(?,feedback),interview_updated_at=CASE WHEN ?=2 THEN NOW() ELSE interview_updated_at END,placement_updated_at=CASE WHEN ?=3 THEN NOW() ELSE placement_updated_at END,date=NOW() WHERE id=?");
+        $stmt->bind_param('issiii', $processId, $interviewSlot, $feedback, $processId, $processId, $id);
+        $stmt->execute();
+        $this->conn->commit();
+        return ['success'=>true,'message'=>$processId===2?"Interview round {$roundNumber} scheduled successfully.":'Candidate marked as placed successfully.','process_id'=>$processId,'round_number'=>$roundNumber];
+    } catch (Throwable $error) {
+        $this->conn->rollback();
+        return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Failed to update application process.','error'=>$error->getMessage()];
     }
-
-    $stmt->bind_param("issiii", $processId, $interviewSlot, $feedback, $processId, $processId, $id);
-
-    if (!$stmt->execute()) {
-        return [
-            "success" => false,
-            "message" => "Failed to update process.",
-            "error" => $stmt->error
-        ];
-    }
-
-    if ($stmt->affected_rows === 0) {
-        return [
-            "success" => false,
-            "message" => "Application not found."
-        ];
-    }
-
-    return [
-        "success" => true,
-        "message" => "Application process updated successfully.",
-        "process_id" => $processId
-    ];
 }
-
 /*
 |--------------------------------------------------------------------------
 | RECENT ACTIVITIES
