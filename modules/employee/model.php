@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/AttendancePolicyService.php';
 
 function getEmployeeByUsername($username) {
     global $conn;
@@ -116,7 +117,7 @@ function fetchMonthlyAttendanceRoster($month) {
     while($row=$result->fetch_assoc()){
         $row['id']=(int)$row['id'];$row['present_days']=(int)$row['present_days'];
         $row['late_days']=(int)$row['late_days'];$row['half_days']=(int)$row['half_days'];
-        $row['total_hours']=(float)($row['total_hours']??0);$rows[]=$row;
+        $row['total_hours']=(float)($row['total_hours']??0);$row=array_merge($row,(new AttendancePolicyService())->calculate((int)$row['id'],$month));$rows[]=$row;
     }
     return ['success'=>true,'month'=>$month,'start_date'=>$start,'end_date'=>$end,'data'=>$rows];
 }

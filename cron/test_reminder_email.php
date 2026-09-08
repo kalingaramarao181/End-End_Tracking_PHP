@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__ . '/../modules/document_reminders/services/ReminderEmailService.php';
+require_once __DIR__ . '/../modules/document_reminders/services/OrganizationReminderSmtpService.php';
 
 $recipient = trim($argv[1] ?? '');
 if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
@@ -14,7 +15,7 @@ if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
 }
 
 try {
-    (new ReminderEmailService())->send([
+    (new ReminderEmailService((new OrganizationReminderSmtpService())->config()))->send([
         'candidate_email' => $recipient,
         'candidate_name' => 'SMTP Test Candidate',
         'expiry_date' => date('Y-m-d', strtotime('+6 months')),

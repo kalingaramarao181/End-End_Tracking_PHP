@@ -1,0 +1,3 @@
+-- Reusable statutory, banking and payroll identity details for professional payslips.
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='payroll_profile')=0,'ALTER TABLE employees ADD COLUMN payroll_profile JSON NULL AFTER monthly_salary','SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

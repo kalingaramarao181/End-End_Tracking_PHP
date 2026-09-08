@@ -2,6 +2,7 @@
 require_once __DIR__ . '/controller.php';
 require_once __DIR__ . '/../../middleware/auth.php';
 require_once __DIR__ . '/../../middleware/role.php';
+require_once __DIR__ . '/payroll.php';
 
 header('Content-Type: application/json');
 $method = $_SERVER['REQUEST_METHOD'];
@@ -15,10 +16,21 @@ if ($method === 'GET' && $path === 'attendance/leaves/email-review') {
     reviewLeaveFromEmail();
 }
 
+if ($method === 'GET' && preg_match('#^employee-onboarding/([a-f0-9]{64})$#',$path,$matches)) { payrollOnboardingStatus($matches[1]); exit; }
+if ($method === 'POST' && preg_match('#^employee-onboarding/([a-f0-9]{64})$#',$path,$matches)) { payrollSubmitOnboarding($matches[1]); exit; }
 $user = authenticate();
 $employeePermission=getEffectivePermission('employees');
 $attendancePermission=getEffectivePermission('attendance');
 $isAdmin = ($employeePermission['data_scope']??'OWN')==='ALL';
+if ($method === 'POST' && $path === 'attendance/onboarding-invites') { requirePermission('employees','can_create'); try{echo json_encode(payrollCreateOnboardingInvite($user));}catch(Throwable $e){http_response_code(422);echo json_encode(['success'=>false,'message'=>$e->getMessage()]);} exit; }
+if ($method === 'GET' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderStatus($user); exit; }
+if ($method === 'POST' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderSave($user); exit; }
+if ($method === 'DELETE' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderRemove($user); exit; }
+if ($method === 'GET' && $path === 'attendance/payslips') { requirePermission('payslips','can_view'); payrollRoster(); exit; }
+if ($method === 'GET' && preg_match('#^attendance/payslips/draft/([0-9]+)$#',$path,$matches)) { requirePermission('payslips','can_create'); payrollDraft((int)$matches[1]); exit; }
+if ($method === 'POST' && $path === 'attendance/payslips') { requirePermission('payslips','can_create'); payrollGenerate($user); exit; }
+if ($method === 'PUT' && preg_match('#^attendance/payslips/([0-9]+)$#',$path,$matches)) { requirePermission('payslips','can_edit'); payrollUpdate((int)$matches[1],$user); exit; }
+if ($method === 'POST' && preg_match('#^attendance/payslips/([0-9]+)/send$#',$path,$matches)) { requirePermission('payslips','can_share'); payrollSend((int)$matches[1],$user); exit; }
 
 if ($method === 'GET' && in_array($path, ['employee/list', 'employees'], true)) {
     requirePermission('employees','can_view');
@@ -40,6 +52,7 @@ if ($method === 'GET' && $path === 'attendance/today') {
     requirePermission('attendance','can_view');
     attendanceToday($user, ($attendancePermission['data_scope'] ?? 'OWN') === 'ALL'); exit;
 }
+if ($method === 'PUT' && preg_match('#^attendance/month/([0-9]+)$#',$path,$matches)) { requirePermission('attendance','can_edit'); $input=json_decode(file_get_contents('php://input'),true)?:[]; try{$data=(new AttendancePolicyService())->save((int)$matches[1],(string)($input['month']??''),$input,(int)$user['id']);echo json_encode(['success'=>true,'message'=>'Monthly attendance adjustments saved.','data'=>$data]);}catch(Throwable $e){http_response_code(422);echo json_encode(['success'=>false,'message'=>$e->getMessage()]);} exit; }
 if ($method === 'GET' && $path === 'attendance/month') {
     requirePermission('attendance','can_view');
     if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();

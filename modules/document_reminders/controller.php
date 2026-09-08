@@ -3,6 +3,7 @@
 require_once __DIR__ . '/model.php';
 require_once __DIR__ . '/../../middleware/upload.php';
 require_once __DIR__ . '/services/ReminderEmailService.php';
+require_once __DIR__ . '/services/OrganizationReminderSmtpService.php';
 
 class DocumentReminderController
 {
@@ -155,6 +156,25 @@ class DocumentReminderController
     public function update($id){ try{$row=$this->model->updateReminder($id,$this->input());$this->respond($row?200:404,$row?['success'=>true,'data'=>$row]:['success'=>false,'message'=>'Reminder not found.']);}catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);} }
     public function disable($id){ $ok=$this->model->disable($id); $this->respond($ok?200:404,['success'=>$ok,'message'=>$ok?'Reminder disabled.':'Reminder not found.']); }
     public function createManual($documentId){ try{$data=$this->input();$expiry=ReminderDateService::normalizeDate($data['expiry_date']??null);if(!$expiry)throw new InvalidArgumentException('A target date using YYYY-MM-DD is required.');$document=$this->model->getDocument($documentId);if(!$document)throw new InvalidArgumentException('Document not found.');$details=$document['document_details']?:[];$details[$document['document_type']==='H1B'?'expiry_date':'reminder_date']=$expiry;$details['entry_method']='Manual';$details['confidence']=100;$privileges=$data['privileges']??null;if($privileges) $details['privileges']=$privileges;$this->model->saveDetails($documentId,$details);$row=$this->model->createOrUpdateReminder($documentId,$expiry,null,$privileges);$this->respond(201,['success'=>true,'data'=>$row]);}catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);} }
-    public function sendNow($id){ $row=$this->model->getReminder($id); if(!$row)$this->respond(404,['success'=>false,'message'=>'Reminder not found.']); if($row['document_type']==='I-140'&&!empty($row['document_details']['approved_date'])) $this->respond(409,['success'=>false,'message'=>'Approved I-140 documents do not send email reminders.']); try{(new ReminderEmailService())->send($row);$this->respond(200,['success'=>true,'message'=>'Reminder sent. Future schedule was not changed.']);}catch(Throwable $e){$this->respond(502,['success'=>false,'message'=>$e->getMessage()]);} }
+    public function sendNow($id){
+        $row=$this->model->getReminder($id);
+        if(!$row)$this->respond(404,['success'=>false,'message'=>'Reminder not found.']);
+        if($row['document_type']==='I-140'&&!empty($row['document_details']['approved_date']))$this->respond(409,['success'=>false,'message'=>'Approved I-140 documents do not send email reminders.']);
+        try{
+            $mailer=new ReminderEmailService((new OrganizationReminderSmtpService())->config());
+            $mailer->send($row);
+            $this->respond(200,['success'=>true,'message'=>'Reminder sent using the organization mailbox. Future schedule was not changed.']);
+        }catch(Throwable $e){$this->respond(502,['success'=>false,'message'=>$e->getMessage()]);}
+    }
+    public function mailSettings()
+    {
+        try{$this->respond(200,['success'=>true]+(new OrganizationReminderSmtpService())->status());}
+        catch(Throwable $e){$this->respond(500,['success'=>false,'message'=>$e->getMessage()]);}
+    }
+    public function saveMailSettings()
+    {
+        try{$result=(new OrganizationReminderSmtpService())->saveAndVerify($this->input());$this->respond(200,['success'=>true,'message'=>'Document Reminder mailbox authenticated and saved for the organization.']+$result);}
+        catch(Throwable $e){$this->respond(422,['success'=>false,'message'=>$e->getMessage()]);}
+    }
     public function dashboard(){ $this->respond(200,['success'=>true,'data'=>$this->model->dashboard()]); }
 }

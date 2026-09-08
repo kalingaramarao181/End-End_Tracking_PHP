@@ -9,6 +9,8 @@ $controller=new DocumentReminderController();
 $method=$_SERVER['REQUEST_METHOD'];
 $uri=str_replace('/api','',parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH));
 
+if($method==='GET'&&$uri==='/document-reminders/mail-settings'){requirePermission('candidates','can_view');$controller->mailSettings();}
+if($method==='POST'&&$uri==='/document-reminders/mail-settings'){requireReminderMailAdmin();$controller->saveMailSettings();}
 if($method==='POST'&&$uri==='/document-reminders/documents/upload'){requirePermission('candidates','can_edit');$controller->upload();}
 if($method==='GET'&&$uri==='/document-reminders'){requirePermission('candidates','can_view');$controller->list();}
 if($method==='GET'&&$uri==='/document-reminders/export'){requirePermission('candidates','can_view');$controller->export();}

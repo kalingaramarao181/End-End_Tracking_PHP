@@ -3,3 +3,4 @@ config/mail.php
 config/services.php
 config/jwt.php
 config/mail.local.example.php
+config/mail-credential-key.php

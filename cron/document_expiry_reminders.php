@@ -3,8 +3,9 @@
 if (PHP_SAPI !== 'cli') { http_response_code(403); exit("CLI only\n"); }
 require_once __DIR__ . '/../modules/document_reminders/model.php';
 require_once __DIR__ . '/../modules/document_reminders/services/ReminderEmailService.php';
+require_once __DIR__ . '/../modules/document_reminders/services/OrganizationReminderSmtpService.php';
 
-$model=new DocumentReminderModel(); $mailer=new ReminderEmailService(); $model->expirePastReminders();
+$model=new DocumentReminderModel(); $mailer=new ReminderEmailService((new OrganizationReminderSmtpService())->config()); $model->expirePastReminders();
 $sent=0; $failed=0;
 foreach($model->dueReminders() as $reminder){
     if($reminder['expiry_date']<=date('Y-m-d')) continue;

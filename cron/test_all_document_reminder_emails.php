@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__ . '/../modules/document_reminders/services/ReminderEmailService.php';
+require_once __DIR__ . '/../modules/document_reminders/services/OrganizationReminderSmtpService.php';
 
 $tests = [
     [
@@ -34,7 +35,7 @@ $tests = [
     ],
 ];
 
-$mailer = new ReminderEmailService();
+$mailer = new ReminderEmailService((new OrganizationReminderSmtpService())->config());
 $failed = 0;
 
 foreach ($tests as $test) {

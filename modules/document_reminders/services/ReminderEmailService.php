@@ -9,9 +9,10 @@ class ReminderEmailService
 {
     private $config;
 
-    public function __construct()
+    public function __construct(array $configOverride = [])
     {
-        $this->config = require __DIR__ . '/../../../config/mail.php';
+        $defaults = require __DIR__ . '/../../../config/mail.php';
+        $this->config = array_merge($defaults, $configOverride);
         $this->validateConfiguration();
     }
 
@@ -158,7 +159,7 @@ HTML;
         return true;
     }
 
-    public function sendHtml($to, $name, $subject, $htmlBody, $plainBody = '')
+    public function sendHtml($to, $name, $subject, $htmlBody, $plainBody = '', $attachment = null, $attachmentName = 'document.pdf', $embeddedImagePath = null)
     {
         if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException('Approval recipient is not a valid email address.');
@@ -187,6 +188,12 @@ HTML;
             $mail->Subject = $subject;
             $mail->Body = $htmlBody;
             $mail->AltBody = $plainBody ?: strip_tags($htmlBody);
+            if ($attachment !== null) {
+                $mail->addStringAttachment($attachment, $attachmentName, 'base64', 'application/pdf');
+            }
+            if ($embeddedImagePath && is_file($embeddedImagePath)) {
+                $mail->addEmbeddedImage($embeddedImagePath, 'brand-logo', 'beedata-logo.png');
+            }
             $mail->send();
         } catch (PHPMailerException $exception) {
             throw new RuntimeException('SMTP email failed: ' . $mail->ErrorInfo, 0, $exception);
