@@ -200,6 +200,15 @@ class ApplicationController
         $page = isset($_GET['page']) ? (int) $_GET['page'] : 1;
         $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
         $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+        $startDate = isset($_GET['start_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$_GET['start_date'])
+            ? (string)$_GET['start_date']
+            : null;
+        $endDate = isset($_GET['end_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$_GET['end_date'])
+            ? (string)$_GET['end_date']
+            : null;
+        if ($startDate && $endDate && $startDate > $endDate) {
+            $this->jsonResponse(422, ['success' => false, 'message' => 'Start date cannot be after end date.']);
+        }
 
         // Optional filter for Admin
         $positionId = isset($_GET['position_id']) && $_GET['position_id'] !== ''
@@ -279,7 +288,9 @@ class ApplicationController
             $limit,
             $search,
             $employeeIdFilter,
-            $positionIdFilter
+            $positionIdFilter,
+            $startDate,
+            $endDate
         );
 
         if (!$result['success']) {

@@ -60,6 +60,7 @@ class ApplicationModel
         SELECT
             u.id AS user_id,
             u.nick_name,
+            p.position_name,
             COUNT(a.id) AS total_submissions
         FROM application a
         LEFT JOIN users u
@@ -67,7 +68,7 @@ class ApplicationModel
         LEFT JOIN positions p
             ON u.position_id = p.id
         $where
-        GROUP BY u.id, u.nick_name
+        GROUP BY u.id, u.nick_name, p.position_name
         ORDER BY total_submissions DESC
     ";
 
@@ -97,13 +98,19 @@ class ApplicationModel
             $data[] = [
                 "user_id" => (int) $row['user_id'],
                 "label" => $row['nick_name'] ?? 'Unknown',
+                "category" => stripos((string)($row['position_name'] ?? ''), 'recruiter') !== false
+                    ? 'recruiters'
+                    : 'benchsales',
+                "category_label" => stripos((string)($row['position_name'] ?? ''), 'recruiter') !== false
+                    ? 'Recruiting'
+                    : 'Bench Sales',
                 "value" => (int) $row['total_submissions']
             ];
         }
 
         return [
             "success" => true,
-            "title" => "Submissions Overview",
+            "title" => "Submissions by Employee",
             "total" => $grandTotal,
             "data" => $data
         ];
@@ -232,15 +239,23 @@ class ApplicationModel
 
         $candidateSummary = $candidateStmt->get_result()->fetch_assoc();
 
-        return [
-            'success' => true,
-            'data' => [
-                'submissions' => (int)$summary['submissions'],
-                'interviews' => (int)$summary['interviews'],
-                'placements' => (int)$summary['placements'],
-                'active_candidates' => (int)$candidateSummary['active_candidates']
-            ]
+        $data = [
+            'submissions' => (int)$summary['submissions'],
+            'interviews' => (int)$summary['interviews'],
+            'placements' => (int)$summary['placements'],
+            'active_candidates' => (int)$candidateSummary['active_candidates']
         ];
+
+        $normalizedCategory = strtolower(trim((string)$category));
+        if ($normalizedCategory === '' || $normalizedCategory === 'all') {
+            $data['category_breakdown'] = [];
+            foreach (['recruiters', 'benchsales'] as $breakdownCategory) {
+                $breakdown = $this->getDashboardSummary($startDate, $endDate, $breakdownCategory);
+                $data['category_breakdown'][$breakdownCategory] = $breakdown['data'] ?? [];
+            }
+        }
+
+        return ['success' => true, 'data' => $data];
     }
 
     private function buildDashboardFilters(
@@ -271,6 +286,8 @@ class ApplicationModel
             $conditions[] = "LOWER(p.position_name) LIKE '%recruiter%'";
         } elseif ($category === 'benchsales') {
             $conditions[] = "LOWER(p.position_name) LIKE '%bench%'";
+        } elseif ($category === 'all') {
+            $conditions[] = "(LOWER(p.position_name) LIKE '%recruiter%' OR LOWER(p.position_name) LIKE '%bench%')";
         }
 
         return [
@@ -478,7 +495,9 @@ class ApplicationModel
         $search,
 
         $employeeId = null,
-        $positionId = null
+        $positionId = null,
+        $startDate = null,
+        $endDate = null
     ) {
         $page = max(1, (int) $page);
         $limit = max(1, (int) $limit);
@@ -498,6 +517,7 @@ class ApplicationModel
             $conditions[] = "(
         COALESCE(c.name, a.candidate_name) LIKE ?
         OR a.client LIKE ?
+        OR u.nick_name LIKE ?
         OR a.vendor LIKE ?
         OR a.role LIKE ?
         OR a.feedback LIKE ?
@@ -506,10 +526,21 @@ class ApplicationModel
 
             $searchValue = '%' . $search . '%';
 
-            for ($i = 0; $i < 6; $i++) {
+            for ($i = 0; $i < 7; $i++) {
                 $params[] = $searchValue;
                 $types .= 's';
             }
+        }
+
+        if ($startDate !== null) {
+            $conditions[] = "DATE(a.date_created) >= ?";
+            $params[] = $startDate;
+            $types .= 's';
+        }
+        if ($endDate !== null) {
+            $conditions[] = "DATE(a.date_created) <= ?";
+            $params[] = $endDate;
+            $types .= 's';
         }
 
         /*
@@ -628,6 +659,8 @@ class ApplicationModel
             'page' => $page,
             'limit' => $limit,
             'search' => $search,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
             'employee_id_filter' => $employeeId,
             'position_id_filter' => $positionId,
             'total_records' => $totalRecords,
@@ -868,6 +901,28 @@ class ApplicationModel
         $from = " FROM application a
             LEFT JOIN candidate c ON c.id = a.candidate_id
             INNER JOIN users u ON u.id = a.employee_id";
+        $detailMetric = strtolower(trim((string)($query['detail_metric'] ?? 'submissions')));
+        if (!in_array($detailMetric, ['submissions', 'interviews', 'placements'], true)) {
+            $detailMetric = 'submissions';
+        }
+        $detailJoin = '';
+        $detailWhere = '';
+        $detailActivityDate = $activityDate;
+        $detailEventId = 'NULL';
+        $detailProcessId = 'a.process_id';
+        $detailStatus = "CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview' WHEN 3 THEN 'Placed' ELSE 'Unknown' END";
+        if ($detailMetric === 'submissions') {
+            $detailWhere = " AND $submissionInRange";
+        } else {
+            $eventType = $detailMetric === 'interviews' ? 'interview' : 'placed';
+            $detailEventDateSql = str_replace('h.created_at', 'dh.created_at', $eventDateSql);
+            $detailJoin = " INNER JOIN application_process_history dh
+                ON dh.application_id=a.id AND dh.event_type='$eventType'$detailEventDateSql";
+            $detailActivityDate = 'dh.created_at';
+            $detailEventId = 'dh.id';
+            $detailProcessId = $detailMetric === 'interviews' ? '2' : '3';
+            $detailStatus = $detailMetric === 'interviews' ? "'Interview'" : "'Placed'";
+        }
 
         $summarySql = "SELECT SUM($submissionInRange) total_submissions,
                 SUM($interviewCount) interviews,
@@ -932,18 +987,25 @@ class ApplicationModel
         }
         $trendRows = $this->fetchPerformanceRows($trendStmt);
 
-        $applicationSql = "SELECT a.id, a.candidate_id, a.employee_id,
+        $applicationCountSql = "SELECT COUNT(*) detail_total $from $detailJoin $where $detailWhere";
+        $applicationCountStmt = $this->executePerformanceQuery($applicationCountSql, $types, $params);
+        if (!$applicationCountStmt) {
+            return ['success' => false, 'message' => 'Unable to count performance details.'];
+        }
+        $applicationTotal = (int)$applicationCountStmt->get_result()->fetch_assoc()['detail_total'];
+        $applicationCountStmt->close();
+
+        $applicationSql = "SELECT a.id, $detailEventId AS detail_event_id, a.candidate_id, a.employee_id,
                 $candidateName candidate_name, u.nick_name employee_name,
-                a.date_created, a.date_created AS submission_date, $activityDate AS activity_date,
+                a.date_created, a.date_created AS submission_date, $detailActivityDate AS activity_date,
                 (SELECT MIN(h.created_at) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND h.round_number=1) interview_1_date,
                 (SELECT MIN(h.created_at) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND h.round_number=2) interview_2_date,
                 (SELECT MAX(h.created_at) FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='placed') placement_date,
                 a.interview_updated_at, a.placement_updated_at,
                 a.role, a.vendor, a.poc, a.client, a.rate,
-                a.candidate_loc, a.feedback, a.process_id,
-                CASE a.process_id WHEN 1 THEN 'Submitted' WHEN 2 THEN 'Interview'
-                    WHEN 3 THEN 'Placed' ELSE 'Unknown' END status
-            $from $where ORDER BY activity_date DESC, a.id DESC LIMIT ? OFFSET ?";
+                a.candidate_loc, a.feedback, $detailProcessId AS process_id,
+                $detailStatus AS status
+            $from $detailJoin $where $detailWhere ORDER BY activity_date DESC, a.id DESC LIMIT ? OFFSET ?";
         $applicationParams = $params;
         $applicationParams[] = $applicationLimit;
         $applicationParams[] = $applicationOffset;
@@ -965,13 +1027,14 @@ class ApplicationModel
                 'applications_pagination' => [
                     'page' => $applicationPage,
                     'limit' => $applicationLimit,
-                    'total' => $summary['total_submissions'],
-                    'total_pages' => max(1, (int)ceil($summary['total_submissions'] / $applicationLimit))
+                    'total' => $applicationTotal,
+                    'total_pages' => max(1, (int)ceil($applicationTotal / $applicationLimit))
                 ],
                 'filters' => [
                     'start_date' => $query['start_date'] ?? null,
                     'end_date' => $query['end_date'] ?? null,
-                    'search' => $search
+                    'search' => $search,
+                    'detail_metric' => $detailMetric
                 ]
             ]
         ];

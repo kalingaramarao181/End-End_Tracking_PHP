@@ -78,7 +78,7 @@ class DashboardModel
         return ['success' => true, 'data' => $rows];
     }
 
-    public function getWorkforceAnalytics(array $user, $selectedEmployeeId = null, $period = 'this_week')
+    public function getWorkforceAnalytics(array $user, $selectedEmployeeId = null, $period = 'this_week', $category = 'all')
     {
         $isAdmin = in_array((int)$user['position_id'], [1, 2], true);
         $scopeSql = $isAdmin ? '' : ' AND a.employee_id = ?';
@@ -88,6 +88,12 @@ class DashboardModel
         $period = in_array($period, ['today', 'this_week', 'this_month'], true)
             ? $period
             : 'this_week';
+        $category = strtolower(trim((string)$category));
+        $categorySql = $category === 'recruiters'
+            ? " AND LOWER(p.position_name) LIKE '%recruiter%'"
+            : ($category === 'benchsales'
+                ? " AND LOWER(p.position_name) LIKE '%bench%'"
+                : ($category === 'all' ? " AND (LOWER(p.position_name) LIKE '%recruiter%' OR LOWER(p.position_name) LIKE '%bench%')" : ''));
 
         if ($period === 'today') {
             $currentPeriod = 'DATE(a.date_created) = CURDATE()';
@@ -127,7 +133,7 @@ class DashboardModel
                     $currentPeriod OR $previousPeriod OR EXISTS (SELECT 1 FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='interview' AND ($currentInterviewPeriod OR $previousInterviewPeriod)) OR EXISTS (SELECT 1 FROM application_process_history h WHERE h.application_id=a.id AND h.event_type='placed' AND ($currentPlacementPeriod OR $previousPlacementPeriod))
                 )
             LEFT JOIN positions p ON p.id = u.position_id
-            WHERE u.status = 'Active' $employeeScopeSql
+            WHERE u.status = 'Active' $employeeScopeSql $categorySql
             GROUP BY u.id, u.nick_name, u.email, p.position_name
             HAVING this_week_submissions > 0 OR last_week_submissions > 0
                 OR this_week_interviews > 0 OR last_week_interviews > 0
@@ -176,10 +182,11 @@ class DashboardModel
             COALESCE(NULLIF(u.nick_name, ''), u.email) AS employee_name";
         $submissionFrom = " FROM application a
             LEFT JOIN candidate c ON c.id = a.candidate_id
-            INNER JOIN users u ON u.id = a.employee_id";
+            INNER JOIN users u ON u.id = a.employee_id
+            LEFT JOIN positions p ON p.id = u.position_id";
 
         $latestSql = "SELECT $submissionSelect $submissionFrom
-            WHERE 1=1 $scopeSql
+            WHERE 1=1 $scopeSql $categorySql
             ORDER BY a.date_created DESC, a.id DESC LIMIT 8";
         $latestStmt = $this->prepareAndExecute($latestSql, $scopeTypes, $scopeParams);
         if (!$latestStmt) {

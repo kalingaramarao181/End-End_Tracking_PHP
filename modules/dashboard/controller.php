@@ -48,7 +48,8 @@ class DashboardController
         $this->respond($this->model->getWorkforceAnalytics(
             authUser(),
             $employeeId,
-            $_GET['period'] ?? 'this_week'
+            $_GET['period'] ?? 'this_week',
+            $_GET['category'] ?? 'all'
         ));
     }
 
