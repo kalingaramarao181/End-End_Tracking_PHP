@@ -800,7 +800,7 @@ class ApplicationModel
             ELSE a.date_created END";
         $performanceCategory = strtolower(trim((string)($query['category'] ?? 'benchsales')));
         $performancePositionId = $performanceCategory === 'recruiters' ? 4 : 3;
-        $performanceResource = $performanceCategory === 'recruiters' ? 'recruiters' : 'bench_sales';
+        $performanceResource = $performanceCategory === 'recruiters' ? 'recruiting' : 'bench_sales';
         $conditions = ["u.position_id = $performancePositionId"];
         $params = [];
         $types = '';

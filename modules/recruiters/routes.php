@@ -33,7 +33,7 @@ if ($method === 'POST' && $requestUri === '/recruiters/create') {
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
-    requirePermission('recruiters', 'can_create');
+    requirePermission('recruiting', 'can_create');
 
     $applicationController->create();
     exit;
@@ -51,9 +51,9 @@ if ($method === 'GET' && $requestUri === '/recruiters/list') {
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
-    requirePermission('recruiters', 'can_view');
+    requirePermission('recruiting', 'can_view');
 
-    $applicationController->index(4, 'recruiters');
+    $applicationController->index(4, 'recruiting');
     exit;
 }
 
@@ -72,9 +72,9 @@ if (
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
-    requirePermission('recruiters', 'can_view');
+    requirePermission('recruiting', 'can_view');
 
-    $applicationController->show((int)$matches[1], 4, 'recruiters');
+    $applicationController->show((int)$matches[1], 4, 'recruiting');
     exit;
 }
 
@@ -93,9 +93,9 @@ if (
     require_once __DIR__ . '/../../middleware/role.php';
 
     authenticate();
-    requirePermission('recruiters', 'can_edit');
+    requirePermission('recruiting', 'can_edit');
 
-    $applicationController->update((int)$matches[1], 4);
+    $applicationController->update((int)$matches[1], 4, false, 'recruiting');
     exit;
 }
 
@@ -116,9 +116,9 @@ if (
 
 
     authenticate();
-    requirePermission('recruiters', 'can_delete');
+    requirePermission('recruiting', 'can_delete');
 
-    $applicationController->delete((int)$matches[1], 4);
+    $applicationController->delete((int)$matches[1], 4, 'recruiting');
     exit;
 }
 
@@ -126,7 +126,7 @@ if ($method === 'GET' && $requestUri === '/recruiters/dashboard/performance') {
     require_once __DIR__ . '/../../middleware/auth.php';
     require_once __DIR__ . '/../../middleware/role.php';
     authenticate();
-    requirePermission('recruiters', 'can_view');
+    requirePermission('recruiting', 'can_view');
     $_GET['category'] = 'recruiters';
     $applicationController->performanceDashboard();
     exit;
@@ -139,8 +139,8 @@ if (
     require_once __DIR__ . '/../../middleware/auth.php';
     require_once __DIR__ . '/../../middleware/role.php';
     authenticate();
-    requirePermission('recruiters', 'can_edit');
-    $applicationController->updateProcess((int)$matches[1], 4);
+    requirePermission('recruiting', 'can_edit');
+    $applicationController->updateProcess((int)$matches[1], 4, 'recruiting');
     exit;
 }
 

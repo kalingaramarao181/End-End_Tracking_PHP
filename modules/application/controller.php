@@ -335,7 +335,7 @@ class ApplicationController
 | Accepts multipart/form-data
 | Supports file uploads
 */
-    public function update($id, $expectedPositionId = null, $requireCandidateId = false)
+    public function update($id, $expectedPositionId = null, $requireCandidateId = false, $resourceName = null)
 
     {
 
@@ -361,6 +361,11 @@ class ApplicationController
 
         if ($expectedPositionId !== null && (int)($existingData['position_id'] ?? 0) !== (int)$expectedPositionId) {
             $this->jsonResponse(404, ['success' => false, 'message' => 'Application not found in this module.']);
+        }
+
+        if ($resourceName !== null) {
+            require_once __DIR__ . '/../../middleware/role.php';
+            authorizeRecordOwner($resourceName, $existingData['employee_id'] ?? 0);
         }
 
         // Preserve employee_id
@@ -462,12 +467,19 @@ class ApplicationController
     | DELETE /api/application/delete/{id}
     |--------------------------------------------------------------------------
     */
-    public function delete($id, $expectedPositionId = null)
+    public function delete($id, $expectedPositionId = null, $resourceName = null)
     {
-        if ($expectedPositionId !== null) {
+        if ($expectedPositionId !== null || $resourceName !== null) {
             $existing = $this->applicationModel->getApplicationById($id);
-            if (!$existing['success'] || (int)($existing['data']['position_id'] ?? 0) !== (int)$expectedPositionId) {
+            if (!$existing['success']) {
+                $this->jsonResponse(404, ['success' => false, 'message' => 'Application not found.']);
+            }
+            if ($expectedPositionId !== null && (int)($existing['data']['position_id'] ?? 0) !== (int)$expectedPositionId) {
                 $this->jsonResponse(404, ['success' => false, 'message' => 'Application not found in this module.']);
+            }
+            if ($resourceName !== null) {
+                require_once __DIR__ . '/../../middleware/role.php';
+                authorizeRecordOwner($resourceName, $existing['data']['employee_id'] ?? 0);
             }
         }
         $result = $this->applicationModel->deleteApplication($id);
@@ -499,12 +511,19 @@ class ApplicationController
 |--------------------------------------------------------------------------
 */
 
-    public function updateProcess($id, $expectedPositionId = null)
+    public function updateProcess($id, $expectedPositionId = null, $resourceName = null)
     {
-        if ($expectedPositionId !== null) {
+        if ($expectedPositionId !== null || $resourceName !== null) {
             $existing = $this->applicationModel->getApplicationById($id);
-            if (!$existing['success'] || (int)($existing['data']['position_id'] ?? 0) !== (int)$expectedPositionId) {
+            if (!$existing['success']) {
+                $this->jsonResponse(404, ['success' => false, 'message' => 'Application not found.']);
+            }
+            if ($expectedPositionId !== null && (int)($existing['data']['position_id'] ?? 0) !== (int)$expectedPositionId) {
                 $this->jsonResponse(404, ['success' => false, 'message' => 'Application not found in this module.']);
+            }
+            if ($resourceName !== null) {
+                require_once __DIR__ . '/../../middleware/role.php';
+                authorizeRecordOwner($resourceName, $existing['data']['employee_id'] ?? 0);
             }
         }
         $data = $this->getRequestData();
