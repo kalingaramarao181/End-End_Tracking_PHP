@@ -122,16 +122,6 @@ if (
     exit;
 }
 
-if ($method === 'GET' && $requestUri === '/recruiters/dashboard/performance') {
-    require_once __DIR__ . '/../../middleware/auth.php';
-    require_once __DIR__ . '/../../middleware/role.php';
-    authenticate();
-    requirePermission('recruiters', 'can_view');
-    $_GET['category'] = 'recruiters';
-    $applicationController->performanceDashboard();
-    exit;
-}
-
 if (
     $method === 'PUT' &&
     preg_match('#^/recruiters/process/(\d+)$#', $requestUri, $matches)

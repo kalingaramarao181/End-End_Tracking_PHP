@@ -798,17 +798,14 @@ class ApplicationModel
         $activityDate = "CASE WHEN a.process_id = 2 THEN COALESCE(a.interview_updated_at, a.date_created)
             WHEN a.process_id = 3 THEN COALESCE(a.placement_updated_at, a.date_created)
             ELSE a.date_created END";
-        $performanceCategory = strtolower(trim((string)($query['category'] ?? 'benchsales')));
-        $performancePositionId = $performanceCategory === 'recruiters' ? 4 : 3;
-        $performanceResource = $performanceCategory === 'recruiters' ? 'recruiters' : 'bench_sales';
-        $conditions = ["u.position_id = $performancePositionId"];
+        $conditions = ['u.position_id = 3'];
         $params = [];
         $types = '';
 
         // Respect the configured Bench Sales data scope. Users with ALL can
         // review the complete team analytics; every other scope remains user-specific.
         $dataScope = function_exists('permissionScope')
-            ? permissionScope($performanceResource)
+            ? permissionScope('bench_sales')
             : 'OWN';
         if ($dataScope !== 'ALL') {
             $conditions[] = 'a.employee_id = ?';
