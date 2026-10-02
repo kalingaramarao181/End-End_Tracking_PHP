@@ -22,10 +22,26 @@ $user = authenticate();
 $employeePermission=getEffectivePermission('employees');
 $attendancePermission=getEffectivePermission('attendance');
 $isAdmin = ($employeePermission['data_scope']??'OWN')==='ALL';
+if ($method === 'GET' && $path === 'attendance/onboarding-roles') {
+    requirePermission('employees','can_create');
+    echo json_encode(['success'=>true,'roles'=>employeePreOfferRoles()]);exit;
+}
 if ($method === 'POST' && $path === 'attendance/onboarding-invites') { requirePermission('employees','can_create'); try{echo json_encode(payrollCreateOnboardingInvite($user));}catch(Throwable $e){http_response_code(422);echo json_encode(['success'=>false,'message'=>$e->getMessage()]);} exit; }
-if ($method === 'GET' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderStatus($user); exit; }
-if ($method === 'POST' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderSave($user); exit; }
-if ($method === 'DELETE' && $path === 'attendance/mail-sender') { requirePermission('payslips','can_share'); payrollSenderRemove($user); exit; }
+function employeeRequireMailConfigurationPermission() {
+ $employees=getEffectivePermission('employees');
+ if(!empty($employees['can_create'])){requirePermission('employees','can_create');return;}
+ requirePermission('payslips','can_share');
+}
+if (in_array($method,['GET','POST'],true) && $path==='attendance/leave-mail-settings') {
+ requirePermission('attendance','can_edit');
+ if((int)($user['position_id']??0)!==1 && empty($user['super_admin'])){http_response_code(403);echo json_encode(['success'=>false,'message'=>'Only Super Admin can configure the organization leave approval mailbox.']);exit;}
+ require_once __DIR__.'/AttendanceLeaveMailService.php';
+ try{$service=new AttendanceLeaveMailService();$result=$method==='GET'?$service->status():$service->saveAndVerify(employeeRequestData());echo json_encode(['success'=>true,'message'=>$method==='POST'?'Leave approval mailbox verified and saved.':'']+$result);}
+ catch(Throwable $error){http_response_code(422);echo json_encode(['success'=>false,'message'=>$error->getMessage()]);}exit;
+}
+if ($method === 'GET' && $path === 'attendance/mail-sender') { employeeRequireMailConfigurationPermission(); payrollSenderStatus($user); exit; }
+if ($method === 'POST' && $path === 'attendance/mail-sender') { employeeRequireMailConfigurationPermission(); payrollSenderSave($user); exit; }
+if ($method === 'DELETE' && $path === 'attendance/mail-sender') { employeeRequireMailConfigurationPermission(); payrollSenderRemove($user); exit; }
 if ($method === 'GET' && $path === 'attendance/payslips') { requirePermission('payslips','can_view'); payrollRoster(); exit; }
 if ($method === 'GET' && preg_match('#^attendance/payslips/draft/([0-9]+)$#',$path,$matches)) { requirePermission('payslips','can_create'); payrollDraft((int)$matches[1]); exit; }
 if ($method === 'POST' && $path === 'attendance/payslips') { requirePermission('payslips','can_create'); payrollGenerate($user); exit; }
@@ -36,6 +52,10 @@ if ($method === 'GET' && in_array($path, ['employee/list', 'employees'], true)) 
     requirePermission('employees','can_view');
     getEmployees($user);
     exit;
+}
+if ($method === 'GET' && $path === 'employees/upload-limits') {
+    requirePermission('employees','can_create');
+    echo json_encode(['success'=>true,'upload_limits'=>employeeUploadLimits()]);exit;
 }
 if ($method === 'GET' && $path === 'employees/available-users') {
     requirePermission('employees','can_assign');
@@ -125,6 +145,21 @@ if ($method === 'PUT' && preg_match('#^employees/(\d+)/attendance/(\d{4}-\d{2}-\
     setEmployeeAttendanceDate((int)$matches[1], $matches[2]);
     exit;
 }
+if ($method === 'GET' && preg_match('#^employees/(\d+)/documents/([a-f0-9]{32})$#',$path,$matches)) {
+    $employeeId=(int)$matches[1];
+    if ($isAdmin) { requirePermission('employees','can_view'); }
+    else {
+        requirePermission('profile','can_view');
+        $own=fetchEmployeeForUser((int)$user['id']);
+        if (!$own || (int)$own['id']!==$employeeId) {http_response_code(403);echo json_encode(['success'=>false,'message'=>'Permission denied.']);exit;}
+    }
+    employeeDownloadDocument($employeeId,$matches[2]);exit;
+}
+if ($method === 'POST' && preg_match('#^employees/(\d+)$#',$path,$matches)) {
+    requirePermission('employees','can_edit');
+    if (!$isAdmin) employeeAdminDenied();
+    updateEmployeeEntry((int)$matches[1]);exit;
+}
 if ($method === 'GET' && preg_match('#^employees/(\d+)$#', $path, $matches)) {
     $employeeId=(int)$matches[1];
     $own=fetchEmployeeForUser((int)$user['id']);
@@ -150,10 +185,12 @@ if ($method === 'PUT' && preg_match('#^employees/(\d+)/remove-company-name$#', $
 }
 if ($method === 'POST' && $path === 'employees') {
     requirePermission('employees','can_create');
+    if (!$isAdmin) employeeAdminDenied();
     createEmployeeEntry();exit;
 }
 if ($method === 'PUT' && preg_match('#^employees/(\d+)$#', $path, $matches)) {
     requirePermission('employees','can_edit');
+    if (!$isAdmin) employeeAdminDenied();
     updateEmployeeEntry((int)$matches[1]);exit;
 }
 if ($method === 'DELETE' && preg_match('#^employees/(\d+)$#', $path, $matches)) {

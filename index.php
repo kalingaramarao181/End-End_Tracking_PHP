@@ -6,6 +6,7 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 
 $allowedOrigins = [
     "https://e2e.bedatatech.com",
+    "https://e2e.beedatatech.com",
     "http://localhost:3001",
     "http://localhost:3000"
 

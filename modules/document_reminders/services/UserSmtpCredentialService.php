@@ -25,7 +25,7 @@ class UserSmtpCredentialService {
  }
  public function config($userId){
   global $conn;$s=$conn->prepare('SELECT * FROM user_smtp_credentials WHERE user_id=?');$s->bind_param('i',$userId);$s->execute();$row=$s->get_result()->fetch_assoc();
-  if(!$row)throw new RuntimeException('Configure and verify your sender mailbox before sending payslips.');
+  if(!$row)throw new RuntimeException('Configure and verify your sender mailbox in Attendance Management > Configurations before sending emails.');
   return ['host'=>$row['smtp_host'],'port'=>(int)$row['smtp_port'],'encryption'=>$row['encryption'],'username'=>$row['smtp_username'],'password'=>$this->decrypt($row['encrypted_password']),'from_address'=>$row['smtp_username'],'from_name'=>$row['from_name'],'to_address'=>''];
  }
  public function saveAndVerify(array $user,array $input){

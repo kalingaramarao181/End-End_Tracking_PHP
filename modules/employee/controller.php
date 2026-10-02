@@ -116,11 +116,13 @@ function removeEmployeeCompanyName($id) {
 }
 
 function createEmployeeEntry() {
-    $result=createEmployeeRecord(json_decode(file_get_contents('php://input'),true)?:[]);
+    try { $result=createEmployeeRecord(employeeRequestData()); }
+    catch (Throwable $error) { $result=['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be saved.']; }
     http_response_code($result['success']?201:422);echo json_encode($result);
 }
 function updateEmployeeEntry($id) {
-    $result=updateEmployeeRecord($id,json_decode(file_get_contents('php://input'),true)?:[]);
+    try { $result=updateEmployeeRecord($id,employeeRequestData()); }
+    catch (Throwable $error) { $result=['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be saved.']; }
     http_response_code($result['success']?200:(!empty($result['not_found'])?404:422));echo json_encode($result);
 }
 function deleteEmployeeEntry($id) {
@@ -227,9 +229,12 @@ function leaveApprovalBaseUrl(){
     return $scheme.'://'.($_SERVER['HTTP_HOST']??'localhost').($directory==='/'?'':$directory);
 }
 function sendLeaveApprovalEmail($leaveId,$token){
+    require_once __DIR__.'/AttendanceLeaveMailService.php';
+    $mailService=new AttendanceLeaveMailService();
+    $mailConfig=$mailService->status()['configured']?$mailService->config():[];
     $leave=fetchLeaveEmailDetails($leaveId);if(!$leave)throw new RuntimeException('Leave request not found for email.');
     $host=strtolower((string)($_SERVER['HTTP_HOST']??''));$isLocal=strpos($host,'localhost')!==false||strpos($host,'127.0.0.1')!==false;
-    $to=getenv('LEAVE_APPROVAL_TO')?:($isLocal?'kalingaramarao181@gmail.com':'hr_ind@bedatatech.com');
+    $to=$mailConfig['to_address']??(getenv('LEAVE_APPROVAL_TO')?:($isLocal?'kalingaramarao181@gmail.com':'hr_ind@bedatatech.com'));
     $reviewer=getenv('LEAVE_APPROVER_NAME')?:'HR India';$base=leaveApprovalBaseUrl();
     $approve=$base.'/attendance/leaves/email-review?decision=approved&token='.rawurlencode($token);
     $reject=$base.'/attendance/leaves/email-review?decision=rejected&token='.rawurlencode($token);
@@ -242,7 +247,7 @@ function sendLeaveApprovalEmail($leaveId,$token){
         .'<p style="margin-top:24px"><a href="'.$approve.'" style="background:#15803d;color:white;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold">Approve</a> '
         .'<a href="'.$reject.'" style="background:#dc2626;color:white;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:bold">Reject</a></p>'
         .'<p style="font-size:12px;color:#64748b">Each secure link works once and expires in 7 days.</p></div></div>';
-    (new ReminderEmailService())->sendHtml($to,$reviewer,'Leave approval: '.$leave['employee_name'],$html,'Leave approval required for '.$leave['employee_name'].'. Use the Approve or Reject link in this email.');
+    (new ReminderEmailService($mailConfig))->sendHtml($to,$reviewer,'Leave approval: '.$leave['employee_name'],$html,'Leave approval required for '.$leave['employee_name'].'. Use the Approve or Reject link in this email.');
 }
 function reviewLeaveFromEmail(){
     $token=strtolower(trim((string)($_GET['token']??'')));$decision=strtolower(trim((string)($_GET['decision']??'')));

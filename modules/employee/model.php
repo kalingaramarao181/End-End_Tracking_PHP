@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/AttendancePolicyService.php';
+require_once __DIR__ . '/EmployeeCollectionService.php';
 
 function getEmployeeByUsername($username) {
     global $conn;
@@ -126,7 +127,7 @@ function fetchEmployeeById($id) {
     $stmt = $conn->prepare("SELECT e.id, e.employee_id, e.firstname, e.lastname,
             TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) AS legal_name,
             e.address, e.birthdate, e.contact_info, e.gender, e.position_id,
-            e.schedule_id, e.photo, e.created_on, e.user_id,
+            e.schedule_id, e.photo, e.created_on, e.user_id, e.date_of_joining, e.payroll_email, e.candidate_collection,
             u.nick_name AS company_name, u.email AS username,
             u.status AS user_status, u.last_login, p.position_name AS role
         FROM employees e
@@ -135,7 +136,12 @@ function fetchEmployeeById($id) {
         WHERE e.id = ? LIMIT 1");
     $stmt->bind_param('i', $id);
     $stmt->execute();
-    return $stmt->get_result()->fetch_assoc() ?: null;
+    $row = $stmt->get_result()->fetch_assoc();
+    if (!$row) return null;
+    $row['collection'] = employeePublicCollection(employeeDecodeCollection($row['candidate_collection']));
+    $row['upload_limits'] = employeeUploadLimits();
+    unset($row['candidate_collection']);
+    return $row;
 }
 
 function fetchAvailableCompanyUsers($search = '') {
@@ -222,45 +228,78 @@ function removeCompanyUser($employeeId) {
     }
 }
 
+// Call within the employee creation transaction. The singleton row also locks an empty employee table safely.
+function employeeNextCode(): string {
+ global $conn;
+ $result=$conn->query('SELECT `last_value` FROM employee_id_sequence WHERE id=1 FOR UPDATE');
+ if(!$result || !($sequence=$result->fetch_assoc())) throw new RuntimeException('Apply the attendance configurations migration before creating employees.');
+ $result=$conn->query("SELECT COALESCE(MAX(CAST(SUBSTRING(employee_id,7) AS UNSIGNED)),0) maximum FROM employees WHERE employee_id REGEXP '^EMP-I-[0-9]+$'");
+ if(!$result) throw new RuntimeException('Employee IDs could not be allocated.');
+ $next=max((int)$sequence['last_value'],(int)$result->fetch_assoc()['maximum'])+1;
+ $stmt=$conn->prepare('UPDATE employee_id_sequence SET `last_value`=? WHERE id=1');$stmt->bind_param('i',$next);employeeExecute($stmt);
+ return 'EMP-I-'.$next;
+}
+function employeeValidateRecord(array $data, bool $create): array {
+    foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender'] as $field) {
+        $data[$field]=employeeCollectionText($data[$field] ?? '',$field,$field==='address'?5000:250);
+        if ($data[$field]==='' && !($create && $field==='employee_id')) throw new InvalidArgumentException($field.' is required.');
+    }
+    $data['birthdate']=employeeCollectionDate($data['birthdate'],'Birth date',true);
+    $data['date_of_joining']=employeeCollectionDate($data['date_of_joining'] ?? '','Date of joining');
+    if (!in_array($data['gender'],['Male','Female','Other'],true)) throw new InvalidArgumentException('Select a valid gender.');
+    if ($create && empty($data['position_id'])) throw new InvalidArgumentException('Position is required.');
+    foreach (['position_id','schedule_id'] as $field) {
+        $value=$data[$field] ?? null;
+        if ($value===null || $value==='') {$data[$field]=null;continue;}
+        if (filter_var($value,FILTER_VALIDATE_INT)===false || (int)$value<0 || ($field==='position_id'&&(int)$value===0)) throw new InvalidArgumentException('Invalid '.$field.'.');
+        $data[$field]=(int)$value;
+    }
+    $data['photo']=employeeCollectionText($data['photo'] ?? '', 'Photo',500);
+    return $data;
+}
 function createEmployeeRecord(array $data) {
     global $conn;
-    $required = ['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id'];
-    foreach ($required as $field) {
-        if (!isset($data[$field]) || trim((string)$data[$field]) === '') {
-            return ['success' => false, 'message' => "$field is required."];
-        }
+    $createdPaths=[];$transaction=false;
+    try {
+        $data['employee_id']=''; // Employee codes are always allocated by the server.
+        $data=employeeValidateRecord($data,true);
+        $conn->begin_transaction();$transaction=true;
+        $data['employee_id']=employeeNextCode();
+        $stmt=$conn->prepare('INSERT INTO employees(employee_id,firstname,lastname,address,birthdate,contact_info,gender,position_id,schedule_id,photo,date_of_joining,created_on) VALUES(?,?,?,?,?,?,?,?,?,?,?,NOW())');
+        $joining=$data['date_of_joining']?:null;
+        $stmt->bind_param('sssssssiiss',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining);
+        employeeExecute($stmt);$id=(int)$conn->insert_id;
+        employeeSaveCollection($id,$data,[],$createdPaths);
+        $conn->commit();$transaction=false;
+        return ['success'=>true,'message'=>'Employee information and documents saved. Employee ID: '.$data['employee_id'], 'employee_id'=>$data['employee_id'],'id'=>$id];
+    } catch (Throwable $error) {
+        if ($transaction) $conn->rollback();employeeCleanupDocuments($createdPaths);
+        if (!($error instanceof InvalidArgumentException)) error_log('Create employee: '.$error->getMessage());
+        return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be saved. Check the employee ID and try again.'];
     }
-    $stmt = $conn->prepare('SELECT id FROM employees WHERE employee_id = ? LIMIT 1');
-    $stmt->bind_param('s', $data['employee_id']);
-    $stmt->execute();
-    if ($stmt->get_result()->fetch_assoc()) return ['success'=>false,'message'=>'Employee ID already exists.'];
-    $next = $conn->query('SELECT COALESCE(MAX(id),0)+1 next_id FROM employees')->fetch_assoc()['next_id'];
-    $schedule = (int)($data['schedule_id'] ?? 0);
-    $photo = trim((string)($data['photo'] ?? ''));
-    $created = $data['created_on'] ?? date('Y-m-d');
-    $stmt = $conn->prepare('INSERT INTO employees
-        (id,employee_id,firstname,lastname,address,birthdate,contact_info,gender,position_id,schedule_id,photo,created_on)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-    $position = (int)$data['position_id'];
-    $stmt->bind_param('isssssssiiss', $next,$data['employee_id'],$data['firstname'],$data['lastname'],
-        $data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$position,$schedule,$photo,$created);
-    if (!$stmt->execute()) return ['success'=>false,'message'=>'Employee could not be created.'];
-    return ['success'=>true,'message'=>'Employee created successfully.','id'=>(int)$next];
 }
-
 function updateEmployeeRecord($id, array $data) {
     global $conn;
-    $existing = fetchEmployeeById($id);
-    if (!$existing) return ['success'=>false,'not_found'=>true,'message'=>'Employee not found.'];
-    $fields = ['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','photo'];
-    foreach ($fields as $field) if (!array_key_exists($field,$data)) $data[$field]=$existing[$field] ?? '';
-    $stmt=$conn->prepare('UPDATE employees SET employee_id=?,firstname=?,lastname=?,address=?,birthdate=?,
-        contact_info=?,gender=?,position_id=?,schedule_id=?,photo=? WHERE id=?');
-    $position=(int)$data['position_id']; $schedule=(int)$data['schedule_id'];
-    $stmt->bind_param('sssssssiisi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],
-        $data['birthdate'],$data['contact_info'],$data['gender'],$position,$schedule,$data['photo'],$id);
-    if(!$stmt->execute()) return ['success'=>false,'message'=>'Employee could not be updated.'];
-    return ['success'=>true,'message'=>'Employee updated successfully.'];
+    $createdPaths=[];$transaction=false;
+    try {
+        $conn->begin_transaction();$transaction=true;
+        $lock=$conn->prepare('SELECT candidate_collection FROM employees WHERE id=? FOR UPDATE');
+        $lock->bind_param('i',$id);employeeExecute($lock);$record=$lock->get_result()->fetch_assoc();
+        if (!$record) {$conn->rollback();return ['success'=>false,'not_found'=>true,'message'=>'Employee not found.'];}
+        $existing=fetchEmployeeById($id);
+        foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','photo','date_of_joining'] as $field) if (!array_key_exists($field,$data)) $data[$field]=$existing[$field] ?? '';
+        $data=employeeValidateRecord($data,false);
+        $stmt=$conn->prepare('UPDATE employees SET employee_id=?,firstname=?,lastname=?,address=?,birthdate=?,contact_info=?,gender=?,position_id=?,schedule_id=?,photo=?,date_of_joining=? WHERE id=?');
+        $joining=$data['date_of_joining']?:null;
+        $stmt->bind_param('sssssssiissi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining,$id);employeeExecute($stmt);
+        employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths);
+        $conn->commit();$transaction=false;
+        return ['success'=>true,'message'=>'Employee information and documents updated.'];
+    } catch (Throwable $error) {
+        if ($transaction) $conn->rollback();employeeCleanupDocuments($createdPaths);
+        if (!($error instanceof InvalidArgumentException)) error_log('Update employee: '.$error->getMessage());
+        return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be updated. Check the employee ID and try again.'];
+    }
 }
 
 function deleteEmployeeRecord($id) {

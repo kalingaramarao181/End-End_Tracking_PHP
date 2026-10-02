@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__.'/../document_reminders/services/UserSmtpCredentialService.php';
 require_once __DIR__.'/AttendancePolicyService.php';
+require_once __DIR__.'/EmployeePreOfferService.php';
 function payrollSenderStatus($user){$service=new UserSmtpCredentialService();echo json_encode(['success'=>true]+$service->status((int)$user['id']));}
 function payrollSenderSave($user){try{$service=new UserSmtpCredentialService();$result=$service->saveAndVerify($user,json_decode(file_get_contents('php://input'),true)?:[]);echo json_encode(['success'=>true,'message'=>'Sender mailbox authenticated and saved securely.']+$result);}catch(Throwable $error){http_response_code(422);echo json_encode(['success'=>false,'message'=>$error->getMessage()]);}}
 function payrollSenderRemove($user){(new UserSmtpCredentialService())->remove((int)$user['id']);echo json_encode(['success'=>true,'message'=>'Sender mailbox configuration removed.']);}
@@ -70,7 +71,81 @@ function payrollPdf($p){
  $options=new Dompdf\Options();$options->set('isRemoteEnabled',false);$dompdf=new Dompdf\Dompdf($options);$dompdf->loadHtml($html,'UTF-8');$dompdf->setPaper('A4','portrait');$dompdf->render();return $dompdf->output();
 }
 function payrollSend($id,$user){global $conn;$p=payrollFind($id);if(!$p){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Payslip not found.']);return;}$d=$p['snapshot'];$to=$d['payroll_email']??'';if(!filter_var($to,FILTER_VALIDATE_EMAIL)){http_response_code(422);echo json_encode(['success'=>false,'message'=>'Employee payroll email is invalid.']);return;}$name=htmlspecialchars($d['employee_name'],ENT_QUOTES,'UTF-8');$month=htmlspecialchars($d['pay_month'],ENT_QUOTES,'UTF-8');$net=number_format($p['net_pay'],2);$html='<div style="font-family:Arial;max-width:650px;margin:auto;border:1px solid #ddd"><div style="background:#172554;color:white;padding:25px"><img src="cid:brand-logo" alt="BeeData" style="display:block;width:260px;max-width:80%;height:auto;background:white;padding:10px;border-radius:8px"><p>Confidential Payroll</p></div><div style="padding:25px"><h2>Payslip for '.$month.'</h2><p>Hello <strong>'.$name.'</strong>,</p><p>Your monthly payslip has been generated. Net pay: <strong>Rs. '.$net.'</strong>.</p><p>The official payslip is attached as a PDF. Please contact HR if any information needs review.</p><p>Regards,<br><strong>BeeData Technologies HR</strong></p></div></div>';(new ReminderEmailService((new UserSmtpCredentialService())->config((int)$user['id'])))->sendHtml($to,$d['employee_name'],'BeeData Technologies Payslip - '.$month,$html,'Your BeeData Technologies payslip is attached.',payrollPdf($p),$p['payslip_number'].'.pdf',__DIR__.'/../../assets/beedata-logo.png');$s=$conn->prepare("UPDATE employee_payslips SET status='sent',sent_at=NOW() WHERE id=?");$s->bind_param('i',$id);$s->execute();echo json_encode(['success'=>true,'message'=>'Payslip sent successfully to '.$to.'.','data'=>payrollFind($id)]);}
-function payrollCreateOnboardingInvite($user){global $conn;$in=json_decode(file_get_contents('php://input'),true)?:[];$email=strtolower(trim((string)($in['personal_email']??'')));if(!filter_var($email,FILTER_VALIDATE_EMAIL))throw new InvalidArgumentException('A valid employee personal email is required.');$base=rtrim((string)($in['app_url']??''),'/');if(!preg_match('#^https?://(localhost(:\d+)?|e2e\.bedatatech\.com)$#i',$base))throw new InvalidArgumentException('Invalid application URL.');$token=bin2hex(random_bytes(32));$hash=hash('sha256',$token);$uid=(int)$user['id'];$s=$conn->prepare('INSERT INTO employee_onboarding_invites(personal_email,token_hash,created_by,expires_at) VALUES(?,?,?,DATE_ADD(NOW(),INTERVAL 7 DAY))');$s->bind_param('ssi',$email,$hash,$uid);$s->execute();$url=$base.'/employee-onboarding/'.$token;$name='New Employee';$html='<h2>BeeData Technologies Employee Details</h2><p>Please use the secure link below to complete your employee and payroll profile. The link expires in 7 days and can be submitted once.</p><p><a href="'.htmlspecialchars($url,ENT_QUOTES,'UTF-8').'">Complete Employee Details</a></p>';(new ReminderEmailService((new UserSmtpCredentialService())->config($uid)))->sendHtml($email,$name,'Complete your BeeData employee details',$html,'Complete your employee details: '.$url);return ['success'=>true,'message'=>'Secure onboarding form sent to '.$email.'.','public_url'=>$url,'expires_in_days'=>7];}
-function payrollOnboardingStatus($token){global $conn;$hash=hash('sha256',(string)$token);$s=$conn->prepare('SELECT personal_email,expires_at,completed_at FROM employee_onboarding_invites WHERE token_hash=?');$s->bind_param('s',$hash);$s->execute();$r=$s->get_result()->fetch_assoc();if(!$r||$r['completed_at']||strtotime($r['expires_at'])<time()){http_response_code(410);echo json_encode(['success'=>false,'message'=>'This onboarding link is invalid, expired, or already completed.']);return;}echo json_encode(['success'=>true,'personal_email'=>$r['personal_email']]);}
-function payrollSubmitOnboarding($token){global $conn;$in=json_decode(file_get_contents('php://input'),true)?:[];$hash=hash('sha256',(string)$token);foreach(['firstname','lastname','birthdate','gender','address','contact_info'] as $k)if(trim((string)($in[$k]??''))===''){http_response_code(422);echo json_encode(['success'=>false,'message'=>$k.' is required.']);return;}$conn->begin_transaction();try{$s=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=? AND completed_at IS NULL AND expires_at>NOW() FOR UPDATE');$s->bind_param('s',$hash);$s->execute();$invite=$s->get_result()->fetch_assoc();if(!$invite)throw new DomainException('This onboarding link is invalid, expired, or already completed.');$r=$conn->query("SELECT employee_id FROM employees WHERE employee_id REGEXP '^EMP-I-[0-9]+$' ORDER BY CAST(SUBSTRING(employee_id,7) AS UNSIGNED) DESC LIMIT 1 FOR UPDATE")->fetch_assoc();$next=$r?((int)substr($r['employee_id'],6)+1):1;$employeeCode='EMP-I-'.$next;$profile=['father_name'=>$in['father_name']??'','pan_number'=>$in['pan_number']??'','uan_number'=>$in['uan_number']??'','pf_account_number'=>$in['pf_account_number']??'','esi_number'=>$in['esi_number']??'','bank_name'=>$in['bank_name']??'','bank_account_number'=>$in['bank_account_number']??'','ifsc_code'=>$in['ifsc_code']??'','date_of_joining'=>$in['date_of_joining']??'','pay_mode'=>$in['pay_mode']??'Bank Transfer','department'=>$in['department']??'','location'=>'Visakhapatnam','date_of_birth'=>$in['birthdate'],'gender'=>$in['gender'],'permanent_address'=>$in['address']];$profileJson=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES);$salary=max(0,(float)($in['monthly_salary']??0));$insert=$conn->prepare('INSERT INTO employees(employee_id,firstname,lastname,address,birthdate,date_of_joining,contact_info,payroll_email,monthly_salary,gender,payroll_profile,created_on) VALUES(?,?,?,?,?,?,?,?,?,?,NOW())');$insert->bind_param('ssssssssdss',$employeeCode,$in['firstname'],$in['lastname'],$in['address'],$in['birthdate'],$in['date_of_joining'],$in['contact_info'],$invite['personal_email'],$salary,$in['gender'],$profileJson);$insert->execute();$eid=$conn->insert_id;$done=$conn->prepare('UPDATE employee_onboarding_invites SET completed_at=NOW(),employee_id=? WHERE id=?');$done->bind_param('ii',$eid,$invite['id']);$done->execute();$conn->commit();echo json_encode(['success'=>true,'message'=>'Your employee details were submitted successfully.','employee_id'=>$employeeCode]);}catch(Throwable $e){$conn->rollback();http_response_code(422);echo json_encode(['success'=>false,'message'=>$e->getMessage()]);}}
-?>
+function payrollCreateOnboardingInvite($user) {
+    global $conn;
+    $in=employeeRequestData();$email=strtolower(employeeCollectionText($in['personal_email'] ?? '','Personal email',190));
+    if (!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new InvalidArgumentException('A valid personal email is required.');
+    $role=employeeCollectionText($in['selected_role'] ?? '','Selected role',64);
+    $candidateName=employeeCollectionText($in['candidate_name'] ?? '','Candidate name',250);
+    $base=rtrim(employeeCollectionText($in['app_url'] ?? '','Application URL',250),'/');
+    if (!preg_match('#^https?://(localhost(:\\d+)?|e2e\\.(?:beedatatech|bedatatech)\\.com)$#i',$base)) throw new InvalidArgumentException('Invalid application URL.');
+    $token=bin2hex(random_bytes(32));$hash=hash('sha256',$token);$url=$base.'/employee-onboarding/'.$token;
+    $mail=employeePreOfferContent($role,$candidateName,$url);
+    $uid=(int)$user['id'];$config=(new UserSmtpCredentialService())->config($uid);
+    $stmt=$conn->prepare('INSERT INTO employee_onboarding_invites(personal_email,token_hash,created_by,expires_at,selected_role,candidate_name) VALUES(?,?,?,DATE_ADD(NOW(),INTERVAL 7 DAY),?,?)');
+    $stmt->bind_param('ssiss',$email,$hash,$uid,$role,$candidateName);employeeExecute($stmt);$inviteId=(int)$conn->insert_id;
+    try {
+        (new ReminderEmailService($config))->sendHtml($email,$candidateName?:'Candidate',$mail['subject'],$mail['html'],$mail['plain'],null,'document.pdf',__DIR__.'/../../assets/beedata-logo.png');
+    } catch (Throwable $error) {
+        $cleanup=$conn->prepare('DELETE FROM employee_onboarding_invites WHERE id=? AND completed_at IS NULL');
+        $cleanup->bind_param('i',$inviteId);employeeExecute($cleanup);throw $error;
+    }
+    return ['success'=>true,'message'=>'Pre-offer invitation sent to '.$email.'.','public_url'=>$url,'expires_in_days'=>7,'role_name'=>employeePreOfferRoles()[$role]['name']];
+}
+function payrollOnboardingStatus($token) {
+    global $conn;$hash=hash('sha256',(string)$token);
+    $stmt=$conn->prepare('SELECT personal_email,expires_at,completed_at,selected_role,candidate_name FROM employee_onboarding_invites WHERE token_hash=?');
+    $stmt->bind_param('s',$hash);employeeExecute($stmt);$row=$stmt->get_result()->fetch_assoc();
+    if (!$row || $row['completed_at'] || strtotime($row['expires_at'])<time()) {http_response_code(410);echo json_encode(['success'=>false,'message'=>'This onboarding link is invalid, expired, or already completed.']);return;}
+    echo json_encode(['success'=>true,'personal_email'=>$row['personal_email'],'candidate_name'=>$row['candidate_name'] ?? '','role_name'=>employeePreOfferRoles()[$row['selected_role'] ?? '']['name'] ?? '','upload_limits'=>employeeUploadLimits()]);
+}
+function payrollSubmitOnboarding($token) {
+    global $conn;
+    $createdPaths=[]; $transaction=false;
+    try {
+        $in=employeeRequestData();
+        foreach (['firstname','lastname','birthdate','gender','address','contact_info'] as $key) {
+            $in[$key]=employeeCollectionText($in[$key] ?? '',$key,$key==='address'?5000:250);
+            if ($in[$key]==='') throw new InvalidArgumentException($key.' is required.');
+        }
+        $in['birthdate']=employeeCollectionDate($in['birthdate'],'Date of birth',true);
+        $in['date_of_joining']=employeeCollectionDate($in['date_of_joining'] ?? '','Date of joining');
+        if (!in_array($in['gender'],['Male','Female','Other'],true)) throw new InvalidArgumentException('Select a valid gender.');
+        if (!is_array($in['collection'] ?? null)) throw new InvalidArgumentException('Candidate information is required.');
+        // Declaration identity and confirmation time are recorded by the server.
+        $in["collection"]["declaration"]["candidate_name"]=trim($in["firstname"]." ".$in["lastname"]);
+        employeeNormalizeCollection($in['collection'],[],true);
+        $hash=hash('sha256',(string)$token);
+        $conn->begin_transaction();$transaction=true;
+        $stmt=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=? AND completed_at IS NULL AND expires_at>NOW() FOR UPDATE');
+        $stmt->bind_param('s',$hash);employeeExecute($stmt);$invite=$stmt->get_result()->fetch_assoc();
+        if (!$invite) throw new DomainException('This onboarding link is invalid, expired, or already completed.');
+        if (strcasecmp(trim($in['collection']['email']),$invite['personal_email'])!==0) throw new InvalidArgumentException('Use the email address associated with your onboarding invitation.');
+        $employeeCode=employeeNextCode();
+        $profile=[];
+        foreach (['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode','department'] as $key) $profile[$key]=employeeCollectionText($in[$key] ?? ($key==='pay_mode'?'Bank Transfer':''),$key,250);
+        $profile+=['father_name'=>employeeCollectionText($in['collection']['father_name'] ?? '','Father name'),
+            'date_of_joining'=>$in['date_of_joining'],'location'=>'Visakhapatnam','date_of_birth'=>$in['birthdate'],'gender'=>$in['gender'],'permanent_address'=>$in['address']];
+        $profileJson=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
+        $rawSalary=$in['monthly_salary'] ?? '';
+        if (!is_scalar($rawSalary) || ($rawSalary!=='' && (!is_numeric($rawSalary) || (float)$rawSalary<0 || (float)$rawSalary>9999999999.99))) throw new InvalidArgumentException('Monthly salary must be a valid non-negative amount.');
+        $salary=(float)$rawSalary;
+        $insert=$conn->prepare('INSERT INTO employees(employee_id,firstname,lastname,address,birthdate,date_of_joining,contact_info,payroll_email,monthly_salary,gender,payroll_profile,created_on) VALUES(?,?,?,?,?,?,?,?,?,?,?,NOW())');
+        $joining=$in["date_of_joining"]?:null;
+        $insert->bind_param('ssssssssdss',$employeeCode,$in['firstname'],$in['lastname'],$in['address'],$in['birthdate'],$joining,$in['contact_info'],$invite['personal_email'],$salary,$in['gender'],$profileJson);
+        employeeExecute($insert);$employeeId=(int)$conn->insert_id;
+        $in["collection"]["selected_role"]=$invite["selected_role"] ?? "";
+        employeeSaveCollection($employeeId,$in,[],$createdPaths,true);
+        $done=$conn->prepare('UPDATE employee_onboarding_invites SET completed_at=NOW(),employee_id=? WHERE id=?');
+        $done->bind_param('ii',$employeeId,$invite['id']);employeeExecute($done);
+        $conn->commit();$transaction=false;
+        echo json_encode(['success'=>true,'message'=>'Your information and documents were submitted successfully.','employee_id'=>$employeeCode]);
+    } catch (Throwable $error) {
+        if ($transaction) $conn->rollback();
+        employeeCleanupDocuments($createdPaths);
+        $expected=$error instanceof InvalidArgumentException || $error instanceof DomainException;
+        if (!$expected) error_log('Employee onboarding: '.$error->getMessage());
+        http_response_code($error instanceof DomainException ? 410 : ($expected?422:500));
+        echo json_encode(['success'=>false,'message'=>$expected?$error->getMessage():'Your information could not be saved. Please try again or contact HR.']);
+    }
+}

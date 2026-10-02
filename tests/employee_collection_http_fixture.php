@@ -1,0 +1,110 @@
+<?php
+// Run only through the isolated Python harness; this is never a production route.
+if (getenv('E2E_COLLECTION_TEST_MODE') !== '1') {http_response_code(404);exit;}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+require __DIR__.'/../modules/employee/model.php';
+require __DIR__.'/../modules/employee/payroll.php';
+function testCheck($condition,$message) { if (!$condition) throw new RuntimeException($message); }
+$conn->query('CREATE TEMPORARY TABLE employee_id_sequence(id TINYINT PRIMARY KEY,`last_value` BIGINT NOT NULL)');$conn->query('INSERT INTO employee_id_sequence VALUES(1,0)');
+foreach (['employees','employee_onboarding_invites'] as $table) {
+    $definition=$conn->query('SHOW CREATE TABLE `'.$table.'`')->fetch_assoc()['Create Table'];
+    $lines=explode("\n",$definition);
+    $lines=array_filter($lines,fn($line)=>!str_contains($line,'CONSTRAINT '));
+    $definition=implode("\n",$lines);
+    $definition=preg_replace('/,\s*\)/',"\n)",$definition);
+    $definition=preg_replace('/^CREATE TABLE/', 'CREATE TEMPORARY TABLE',$definition);
+    $conn->query($definition);
+    testCheck((int)$conn->query('SELECT COUNT(*) n FROM `'.$table.'`')->fetch_assoc()['n']===0,'Test table is not isolated');
+}
+$token=str_repeat('b',64);$hash=hash('sha256',$token);$email='candidate@example.invalid';
+$stmt=$conn->prepare('INSERT INTO employee_onboarding_invites(personal_email,token_hash,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 1 DAY))');
+$stmt->bind_param('ss',$email,$hash);$stmt->execute();
+$conn->query("UPDATE employee_onboarding_invites SET selected_role=\"web_developer\"");
+$mode=$_GET['mode'] ?? 'success';
+$testDirectory=getenv('EMPLOYEE_DOCUMENT_DIR').DIRECTORY_SEPARATOR.$mode;
+putenv('EMPLOYEE_DOCUMENT_DIR='.$testDirectory);
+if ($mode==='database_failure') {
+    $conn->query('ALTER TABLE employees MODIFY COLUMN candidate_collection VARCHAR(8) NULL');
+    $conn->query("SET SESSION sql_mode='STRICT_ALL_TABLES'");
+    mysqli_report(MYSQLI_REPORT_OFF);
+}
+if ($mode==='expired') $conn->query("UPDATE employee_onboarding_invites SET expires_at=DATE_SUB(NOW(),INTERVAL 1 DAY)");
+if ($mode==='storage_failure') putenv('EMPLOYEE_DOCUMENT_DIR='.__FILE__);
+ob_start();payrollSubmitOnboarding($token);$response=json_decode(ob_get_clean(),true);
+$status=http_response_code() ?: 200;
+$employeeCount=(int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n'];
+$completed=$conn->query('SELECT completed_at FROM employee_onboarding_invites')->fetch_assoc()['completed_at'];
+try {
+    if (!in_array($mode,['success','no_files','no_experience'],true)) {
+        testCheck(!$response['success'],'Expected submission rejection');
+        testCheck($employeeCount===0 && $completed===null,'Rejected submission left employee or consumed invite');
+        testCheck(!is_dir($testDirectory) || count(glob($testDirectory.DIRECTORY_SEPARATOR.'*.enc'))===0,'Rejected submission left uploaded files');
+        http_response_code(200);echo json_encode(['passed'=>true,'mode'=>$mode,'rejection_status'=>$status,'message'=>$response['message']]);exit;
+    }
+    testCheck($response['success'] && $employeeCount===1 && $completed!==null,'Valid submission failed: '.json_encode([$response,$employeeCount,$completed]));
+    $record=$conn->query('SELECT * FROM employees')->fetch_assoc();$id=(int)$record['id'];
+    $collection=employeeDecodeCollection($record['candidate_collection']);
+    testCheck(str_starts_with($record['candidate_collection'],'enc:v1:'),'Collection was not encrypted');
+    testCheck(!str_contains($record['candidate_collection'],'Test Father'),'Sensitive collection leaked');
+    testCheck($collection['father_name']==='Test Father' && $collection['mother_name']==='Test Mother','Family data lost');
+    testCheck($mode==='no_experience' ? !$collection['has_experience'] && $collection['employment']===[] : $collection['employment'][0]['company']==='Test Company' && count($collection['employment'])===5,'Employment data lost');
+    testCheck($collection['declaration']['accepted']===true && $collection['declaration']['candidate_name']==='Test Candidate' && !empty($collection['declaration']['accepted_at']),'Declaration lost');
+    testCheck($collection['selected_role']==='web_developer','Invitation role lost');
+    testCheck($collection['education'][0]['college']==='Test College' && $collection['certifications'][0]['name']==='Test Certification' && $collection['references'][0]['name']==='Test Reference','Dynamic row details lost');
+    testCheck($collection['review']['reviewed_by']==='','Public candidate supplied reviewer');
+    $public=fetchEmployeeById($id);
+    foreach ($public['collection']['documents'] as $document) testCheck(!isset($document['storage_name']),'Storage path exposed');
+    if ($mode!=='no_files') {
+        testCheck(count($collection['documents'])===($mode==='no_experience'?1:2),'Documents were not persisted');
+        foreach ($collection['documents'] as $document) {
+            $encrypted=file_get_contents(employeeDocumentDirectory().DIRECTORY_SEPARATOR.$document['storage_name']);
+            testCheck(str_starts_with($encrypted,'enc:v1:') && !str_contains($encrypted,'%PDF'),'Document not encrypted');
+            ob_start();employeeDownloadDocument($id,$document['id']);$download=ob_get_clean();header_remove("Content-Length");header_remove("Content-Disposition");header("Content-Type: application/json");
+            testCheck(strlen($download)===$document['size'],'Document download corrupted');
+        }
+        testCheck($collection['checklist']['education_edu1_certificate']['status']==='submitted','Upload did not mark submitted');
+    } else {
+        testCheck($collection['checklist']['education_edu1_certificate']['status']==='pending','Fake submitted status accepted without file');
+    }
+    $_FILES=[];
+    $edited=employeePublicCollection($collection);
+    $edited['mother_phone']='9876543210';
+    $edited['review']=['reviewed_by'=>'HR Reviewer','date'=>'2026-10-02'];
+    $edited['declaration']['signature']='Forged admin signature';
+    $edited['documents'][]=['id'=>'fake','storage_name'=>'../../bad'];
+    $save=updateEmployeeRecord($id,['collection'=>$edited]);
+    testCheck($save['success'],'Employee edit failed: '.json_encode($save));
+    $updated=$conn->query('SELECT * FROM employees')->fetch_assoc();
+    $saved=employeeDecodeCollection($updated['candidate_collection']);
+    testCheck($saved['mother_phone']==='9876543210' && $saved['review']['reviewed_by']==='HR Reviewer','Staff changes lost');
+    testCheck($saved['declaration']===$collection['declaration'],'Staff overwrote candidate declaration');
+    testCheck(count($saved['documents'])===count($collection['documents']),'Client injected document metadata');
+    testCheck($updated['position_id']===null && $updated['schedule_id']===null,'Unassigned employee position or schedule was changed');
+    testCheck($updated['payroll_profile']===$record['payroll_profile'],'Employee edit overwrote payroll profile');
+    ob_start();payrollSubmitOnboarding($token);$repeat=json_decode(ob_get_clean(),true);
+    testCheck(!$repeat['success'] && http_response_code()===410,'Single-use token accepted twice');
+    foreach (employeePreOfferRoles() as $key=>$role) {
+        $mail=employeePreOfferContent($key,'Test <Candidate>','https://e2e.beedatatech.com/employee-onboarding/test');
+        testCheck(str_contains($mail['subject'],$role['name']) && str_contains($mail['html'],'Complete My Information Form'),'Pre-offer role or CTA missing');
+        testCheck(str_contains($mail['html'],'Test &lt;Candidate&gt;') && !str_contains($mail['html'],'Test <Candidate>'),'Candidate name was not escaped');
+        foreach ($role['responsibilities'] as $item) testCheck(str_contains($mail['plain'],$item),'Role responsibility missing');
+    }
+    testCheck(count(employeePreOfferRoles())===6,'Expected six pre-offer roles');
+    try {employeePreOfferContent('invalid_role','Candidate','https://example.invalid');throw new RuntimeException('Invalid role accepted');}
+    catch (InvalidArgumentException $expected) {}
+    // Add Employee supports the same collection and does not claim a candidate signed it.
+    $data=employeeRequestData();$data['document_upload_count']=0;$data['employee_id']='TEST-ADMIN-1';$data['position_id']=1;
+    $data['collection']['review']=['reviewed_by'=>'HR Reviewer','date'=>'2026-10-02'];
+    $created=createEmployeeRecord($data);testCheck($created['success'],'Admin employee create failed: '.json_encode($created));
+    $admin=fetchEmployeeById($created['id']);
+    testCheck($record['employee_id']==='EMP-I-1' && $admin['employee_id']==='EMP-I-2' && $created['employee_id']==='EMP-I-2','Manual/public IDs are not sequential or client ID was trusted');
+    $conn->begin_transaction();$rolledBack=employeeNextCode();$conn->rollback();
+    $conn->begin_transaction();$nextCode=employeeNextCode();$conn->rollback();
+    testCheck($rolledBack==='EMP-I-3' && $nextCode==='EMP-I-3','ID allocator rollback failed');
+    testCheck(!$admin['collection']['declaration']['accepted'],'Admin forged candidate declaration');
+    testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===2,'Admin create did not persist');
+    http_response_code(200);
+    echo json_encode(['passed'=>true,'mode'=>$mode,'checks'=>['public submit','encrypted details','family/experience/declaration','encrypted uploads','download roundtrip','staff edit','payroll preserved','null assignments preserved','metadata injection rejected','single-use invite','admin create']]);
+} catch (Throwable $error) {
+    http_response_code(500);echo json_encode(['passed'=>false,'message'=>$error->getMessage()]);
+}

@@ -28,7 +28,8 @@ All routes require JWT authentication and the `chat` resource. The server derive
 
 ## Security
 
-Prepared statements are used throughout. Conversation access is denied unless an active `chat_members` row exists. Direct and contextual uniqueness is database-enforced. Message retry IDs are unique per sender. Message content is rendered as React text, not HTML. API errors do not expose SQL details. Search returns only non-sensitive active-user fields.
+Prepared statements are used throughout. Conversation access is denied unless an active `chat_members` row exists. Direct and contextual uniqueness is database-enforced. Message retry IDs are unique per sender. Message content is rendered as React text, not HTML. API errors do not expos+
+e SQL details. Search returns only non-sensitive active-user fields.
 
 ## Current limitations / next increments
 
