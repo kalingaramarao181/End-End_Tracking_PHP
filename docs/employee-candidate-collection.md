@@ -55,7 +55,7 @@ The fixture is disabled unless `E2E_COLLECTION_TEST_MODE=1`. After deployment, v
 ## Employees and attendance configurations
 
 - Employees now owns Employee Public Form invitations; Payslips contains only payroll workflows.
-- Attendance Management > Configurations (direct route `/dashboard/attendance/configurations`) configures the signed-in sender for pre-offers, public forms and payslips. Employee creators and payslip sharers can manage their own sender; the existing policy restricts sender email changes to Super Admin.
+- Attendance Management > Configurations (direct route `/dashboard/attendance/configurations`) configures the signed-in sender for pre-offers, public forms and payslips. Employee creators and payslip sharers can manage their own sender; any authorized mailbox-configuring user can enter a different sender email, provided its SMTP credentials verify successfully.
 - Super Admin with attendance edit permission can configure a separate organization-wide Leave Approval Mailbox and HR recipient. Existing environment/default settings remain the fallback until this mailbox is configured.
 - Saving either mailbox sends a verification email before persisting encrypted credentials. Failed verification preserves the prior configuration. These deployment checks did not send real mail.
 - Manual Add Employee and public submissions allocate `EMP-I-N` codes through a transactional singleton sequence. Manual entry has no employee-ID field; existing IDs remain visible and read-only during editing. The sequence checks the highest existing code and serializes concurrent creations, including when no employees exist.

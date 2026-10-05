@@ -29,8 +29,8 @@ class UserSmtpCredentialService {
   return ['host'=>$row['smtp_host'],'port'=>(int)$row['smtp_port'],'encryption'=>$row['encryption'],'username'=>$row['smtp_username'],'password'=>$this->decrypt($row['encrypted_password']),'from_address'=>$row['smtp_username'],'from_name'=>$row['from_name'],'to_address'=>''];
  }
  public function saveAndVerify(array $user,array $input){
-  global $conn;$email=strtolower(trim((string)$user['email']));$username=strtolower(trim((string)($input['email']??'')));
-  $isSuperAdmin=(int)($user['position_id']??0)===1||!empty($user['super_admin']);if(!filter_var($username,FILTER_VALIDATE_EMAIL)||(!$isSuperAdmin&&$username!==$email))throw new DomainException($isSuperAdmin?'Enter a valid sender email.':'Sender email must exactly match the logged-in user email: '.$email);
+  global $conn;$username=strtolower(trim((string)($input['email']??'')));
+  if(!filter_var($username,FILTER_VALIDATE_EMAIL))throw new DomainException('Enter a valid sender email.');
   $host=trim((string)($input['host']??''));$port=(int)($input['port']??587);$encryption=strtolower(trim((string)($input['encryption']??'tls')));$password=(string)($input['password']??'');$name=trim((string)($input['from_name']??'BeeData Technologies'));
   if(!$host||$port<1||$port>65535||!in_array($encryption,['tls','ssl','none'],true)||$password==='')throw new InvalidArgumentException('Host, valid port, encryption, and webmail password are required.');
   $config=['host'=>$host,'port'=>$port,'encryption'=>$encryption,'username'=>$username,'password'=>$password,'from_address'=>$username,'from_name'=>$name,'to_address'=>''];
