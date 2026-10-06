@@ -21,7 +21,7 @@ Before sending, staff choose one of six roles: Sr. Bench Sales, Jr. Bench Sales,
 
 The branded BeeData pre-offer email congratulates the recipient on selection, states the role and responsibilities, and provides a secure information-form button. It explains that HR will share formal offer and joining details after review. It does not invent compensation or joining terms. Role definitions are returned from the backend, so the preview and email use the same responsibilities.
 
-The email uses the staff member's authenticated sender mailbox. Failed delivery removes the newly created invitation. The link expires after seven days and is single-use. Existing invitations with no role continue to open. No real email is sent by the automated tests.
+The email uses the staff member's authenticated sender mailbox. Failed delivery removes the newly created invitation. The link expires after seven days and is time-limited. Existing invitations with no role continue to open. No real email is sent by the automated tests.
 
 A sample Web Developer email is available in `docs/pre-offer-preview.html`. Its example link is a preview placeholder.
 
@@ -58,7 +58,7 @@ The fixture is disabled unless `E2E_COLLECTION_TEST_MODE=1`. After deployment, v
 - Attendance Management > Configurations (direct route `/dashboard/attendance/configurations`) configures the signed-in sender for pre-offers, public forms and payslips. Employee creators and payslip sharers can manage their own sender; any authorized mailbox-configuring user can enter a different sender email, provided its SMTP credentials verify successfully.
 - Super Admin with attendance edit permission can configure a separate organization-wide Leave Approval Mailbox and HR recipient. Existing environment/default settings remain the fallback until this mailbox is configured.
 - Saving either mailbox sends a verification email before persisting encrypted credentials. Failed verification preserves the prior configuration. These deployment checks did not send real mail.
-- Manual Add Employee and public submissions allocate `EMP-I-N` codes through a transactional singleton sequence. Manual entry has no employee-ID field; existing IDs remain visible and read-only during editing. The sequence checks the highest existing code and serializes concurrent creations, including when no employees exist.
+- Manual Add Employee and public submissions allocate `BDT-I-NNN` codes through a transactional singleton sequence. Manual entry has no employee-ID field; existing IDs remain visible and read-only during editing. The sequence checks the highest existing code and serializes concurrent creations, including when no employees exist.
 - Apply `migrations/20261003_attendance_configurations.sql` before deploying the changed PHP files. It creates `employee_id_sequence` and `attendance_leave_mail_settings`; it was applied locally. Deploy `AttendanceLeaveMailService.php` along with the updated employee module and `UserSmtpCredentialService.php`.
 - Configurations has its own permission-aware route so authorized employee creators do not need payroll-sharing permission or attendance-view permission just to configure their sender.
 - Verify in staging: configure sender, send pre-offer from Employees, submit form, add employee manually, confirm sequential IDs, send payslip, configure leave mailbox and submit a leave request. Keep the existing encryption key unchanged.
@@ -67,3 +67,30 @@ The fixture is disabled unless `E2E_COLLECTION_TEST_MODE=1`. After deployment, v
 ### MySQL reserved identifier compatibility
 
 The sequence column `last_value` is quoted with backticks in the migration and allocator SQL because LAST_VALUE is reserved in MySQL 8. If the original migration failed at CREATE TABLE, rerun the corrected entire `20261003_attendance_configurations.sql` and deploy the corrected `modules/employee/model.php`. Existing tables and sequence values are preserved; no rename or drop is needed. Local integration checks run on XAMPP and do not establish the live server version.
+
+
+## October 5: BDT IDs, reusable links, and employee profiles
+
+Apply `migrations/20261005_employee_profile_editing.sql` before deploying the employee module updates. This adds allocator row 2 for BDT codes without changing any existing employee IDs. Both creation flows scan the highest numeric BDT-I suffix and allocate under a transaction lock: BDT-I-132 becomes BDT-I-133, and small numbers are padded to three digits. Existing EMP codes are preserved.
+
+Public links accept their first submission within seven days of invitation. After submission, the same token opens the saved employee record and remains editable for four days from the original completed_at. Edits do not allocate another ID, duplicate employees, or extend that deadline. The response includes edit_until with its timezone; the form displays it in the browser's local time. Public document downloads use the same token, record scope, and deadline. Once expired, HR must edit through the authenticated employee page.
+
+Signed-in users can edit their own linked profile through POST /employees/me. The server chooses the employee by authenticated user ID; the request cannot choose another owner. Personal details, family/experience/education/certifications/references, documents, and bank/statutory details are editable. Employee ID, company user mapping, position, schedule, joining date, salary, selected role and HR review are protected from self edits. Candidate declarations remain unchanged during staff/self-service edits. HR/admin employee editing remains subject to employees edit permission and ALL scope.
+
+The profile displays personal, bank/statutory, family, experience, qualifications, certifications, references, documents and attendance details. Editing is inline on the profile. Attendance Login / Logout is a top switch (clocking attendance, not signing out of the application) without an ID popup. It sends the stored employee code to the existing endpoint, which continues to enforce authenticated ownership, company IP/WFH rules and attendance policy. Blocked networks disable the switch and show the network explanation.
+
+Deploy the updated frontend build, employee PHP module (including collection/pre-offer services), and migration. No real invitation or verification emails are sent by the automated checks.
+
+
+## Professional profile view and document locks
+
+The profile view uses information cards rather than disabled form fields. Personal details, family, banking, education, experience, certifications/achievements, references, documents, declaration, performance and attendance are presented separately. The completion ring is a guidance score calculated from personal/family/bank information, qualification details and relevant document slots. Optional references, siblings and achievements do not lower the score. Expanded remaining-item links point to the appropriate section.
+
+Self-service users and candidates using shared links can fill missing document slots. Once a document category has been uploaded, further uploads to that category are rejected server-side; associated qualification/experience/certification entries cannot be removed. Existing documents remain downloadable within existing authorization rules. Corrected versions can be submitted by users with employees edit permission and ALL record scope, through authenticated employee editing. Access follows permissions and record scope, not the role name Admin. Existing versions are retained.
+
+No additional database migration is required for this profile redesign/document policy. Deploy the updated frontend build plus EmployeeCollectionService.php, model.php and payroll.php. The previous BDT/profile migration remains required if it has not been applied already.
+
+## Section editing and attendance insights
+
+Profile cards provide local Edit and Add controls for education, experience, certifications and references. Documents have their own upload editor, retaining the existing document locks. Missing required completion items appear in red. Personal, family and banking section saves validate their required fields. Section-scoped saves merge only the selected section with the current database record, preserving unrelated information. Attendance Insights loads its report when opened and can be collapsed. No additional migration is required; deploy the frontend build and updated employee model.php.
+

@@ -5,7 +5,7 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 require __DIR__.'/../modules/employee/model.php';
 require __DIR__.'/../modules/employee/payroll.php';
 function testCheck($condition,$message) { if (!$condition) throw new RuntimeException($message); }
-$conn->query('CREATE TEMPORARY TABLE employee_id_sequence(id TINYINT PRIMARY KEY,`last_value` BIGINT NOT NULL)');$conn->query('INSERT INTO employee_id_sequence VALUES(1,0)');
+$conn->query('CREATE TEMPORARY TABLE employee_id_sequence(id TINYINT PRIMARY KEY,`last_value` BIGINT NOT NULL)');$conn->query('INSERT INTO employee_id_sequence VALUES(1,0),(2,0)');
 foreach (['employees','employee_onboarding_invites'] as $table) {
     $definition=$conn->query('SHOW CREATE TABLE `'.$table.'`')->fetch_assoc()['Create Table'];
     $lines=explode("\n",$definition);
@@ -81,8 +81,29 @@ try {
     testCheck(count($saved['documents'])===count($collection['documents']),'Client injected document metadata');
     testCheck($updated['position_id']===null && $updated['schedule_id']===null,'Unassigned employee position or schedule was changed');
     testCheck($updated['payroll_profile']===$record['payroll_profile'],'Employee edit overwrote payroll profile');
+
+    // Reopening and editing must target the original employee without extending the deadline.
+    http_response_code(200);ob_start();payrollOnboardingStatus($token);$reopened=json_decode(ob_get_clean(),true);
+    testCheck($reopened['success'] && $reopened['submitted'] && $reopened['employee_id']===$record['employee_id'],'Submitted link could not reopen');
+    testCheck($reopened['data']['collection']['mother_phone']==='9876543210','Reopened link did not load current data');
+    if(!empty($collection['documents'])){
+        $document=$collection['documents'][0];ob_start();payrollOnboardingDocument($token,$document['id']);$linkedDownload=ob_get_clean();header_remove('Content-Length');header_remove('Content-Disposition');header('Content-Type: application/json');
+        testCheck(strlen($linkedDownload)===$document['size'],'Token-scoped document download failed');
+    }
+    $firstCompleted=$conn->query('SELECT completed_at FROM employee_onboarding_invites')->fetch_assoc()['completed_at'];
+    $repeatPayload=employeeRequestData();$repeatPayload['document_upload_count']=0;$_POST['payload']=json_encode($repeatPayload);$_FILES=[];
     ob_start();payrollSubmitOnboarding($token);$repeat=json_decode(ob_get_clean(),true);
-    testCheck(!$repeat['success'] && http_response_code()===410,'Single-use token accepted twice');
+    testCheck($repeat['success'] && $repeat['employee_id']===$record['employee_id'],'Repeat submission did not edit same employee: '.json_encode($repeat));
+    testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===1,'Repeat submission duplicated employee');
+    testCheck($conn->query('SELECT completed_at FROM employee_onboarding_invites')->fetch_assoc()['completed_at']===$firstCompleted,'Editing extended link deadline');
+    $afterEdit=$conn->query('SELECT * FROM employees')->fetch_assoc();
+    testCheck(employeeDecodeCollection($afterEdit['candidate_collection'])['review']['reviewed_by']==='HR Reviewer','Public edit erased HR review');
+    $conn->query("UPDATE employee_onboarding_invites SET completed_at=DATE_SUB(NOW(),INTERVAL 5 DAY)");
+    ob_start();payrollSubmitOnboarding($token);$expiredEdit=json_decode(ob_get_clean(),true);
+    testCheck(!$expiredEdit['success'] && http_response_code()===410,'Expired edit window allowed mutation');
+    ob_start();payrollOnboardingStatus($token);$expiredGet=json_decode(ob_get_clean(),true);testCheck(!$expiredGet['success'],'Expired link exposed personal data');
+    http_response_code(200);
+
     foreach (employeePreOfferRoles() as $key=>$role) {
         $mail=employeePreOfferContent($key,'Test <Candidate>','https://e2e.beedatatech.com/employee-onboarding/test');
         testCheck(str_contains($mail['subject'],$role['name']) && str_contains($mail['html'],'Complete My Information Form'),'Pre-offer role or CTA missing');
@@ -97,14 +118,29 @@ try {
     $data['collection']['review']=['reviewed_by'=>'HR Reviewer','date'=>'2026-10-02'];
     $created=createEmployeeRecord($data);testCheck($created['success'],'Admin employee create failed: '.json_encode($created));
     $admin=fetchEmployeeById($created['id']);
-    testCheck($record['employee_id']==='EMP-I-1' && $admin['employee_id']==='EMP-I-2' && $created['employee_id']==='EMP-I-2','Manual/public IDs are not sequential or client ID was trusted');
+    testCheck($record['employee_id']==='BDT-I-001' && $admin['employee_id']==='BDT-I-002' && $created['employee_id']==='BDT-I-002','Manual/public IDs are not sequential or client ID was trusted');
     $conn->begin_transaction();$rolledBack=employeeNextCode();$conn->rollback();
     $conn->begin_transaction();$nextCode=employeeNextCode();$conn->rollback();
-    testCheck($rolledBack==='EMP-I-3' && $nextCode==='EMP-I-3','ID allocator rollback failed');
+    testCheck($rolledBack==='BDT-I-003' && $nextCode==='BDT-I-003','ID allocator rollback failed');
+    $conn->query("UPDATE employees SET employee_id='BDT-I-132' WHERE id=".(int)$admin['id']);
+    $conn->begin_transaction();$afterExisting=employeeNextCode();$conn->rollback();testCheck($afterExisting==='BDT-I-133','Allocator did not continue highest existing BDT ID');
+    $personal=updateEmployeeRecord($id,['firstname'=>'Updated','employee_id'=>'FORGED','position_id'=>99,'schedule_id'=>99,'date_of_joining'=>'2020-01-01','monthly_salary'=>999999,'collection'=>array_merge($saved,['selected_role'=>'hr','review'=>['reviewed_by'=>'Forged','date'=>'2026-10-01']])],true);
+    testCheck($personal['success'],'Owner edit failed');$ownerAfter=$conn->query('SELECT * FROM employees WHERE id='.(int)$id)->fetch_assoc();
+    testCheck($ownerAfter['firstname']==='Updated' && $ownerAfter['employee_id']==='BDT-I-001' && $ownerAfter['position_id']===null && $ownerAfter['schedule_id']===null && $ownerAfter['date_of_joining']===null,'Personal edit changed protected fields');
+    testCheck($ownerAfter['monthly_salary']===$record['monthly_salary'],'Personal edit changed salary');
+    $ownerCollection=employeeDecodeCollection($ownerAfter['candidate_collection']);testCheck($ownerCollection['selected_role']==='web_developer' && $ownerCollection['review']['reviewed_by']==='HR Reviewer','Personal edit forged role or review');
+    if(!empty($ownerCollection['documents'])){
+        $doc=$ownerCollection['documents'][0];$_FILES=['documents'=>['error'=>[$doc['category']=>[UPLOAD_ERR_OK]]]];
+        $blocked=updateEmployeeRecord($id,['collection'=>$ownerCollection],true);testCheck(!$blocked['success'] && str_contains($blocked['message'],'already uploaded'),'Self edit replaced a locked document');$_FILES=[];
+        $detached=$ownerCollection;$detached['education']=[];
+        $blocked=updateEmployeeRecord($id,['collection'=>$detached],true);testCheck(!$blocked['success'],'Self edit removed an entry with a locked document');
+    }
+    $sectionEdit=updateEmployeeRecord($id,['edit_section'=>'education','firstname'=>'Should not change','bank_name'=>'Should not change','collection'=>array_merge($ownerCollection,['father_name'=>'Should not change'])],true);
+    testCheck($sectionEdit['success'],'Education section save failed');$sectionAfter=fetchEmployeeById($id);testCheck($sectionAfter['firstname']==='Updated' && $sectionAfter['collection']['father_name']===$ownerCollection['father_name'],'Section save overwrote unrelated profile details');
     testCheck(!$admin['collection']['declaration']['accepted'],'Admin forged candidate declaration');
     testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===2,'Admin create did not persist');
     http_response_code(200);
-    echo json_encode(['passed'=>true,'mode'=>$mode,'checks'=>['public submit','encrypted details','family/experience/declaration','encrypted uploads','download roundtrip','staff edit','payroll preserved','null assignments preserved','metadata injection rejected','single-use invite','admin create']]);
+    echo json_encode(['passed'=>true,'mode'=>$mode,'checks'=>['public submit','encrypted details','family/experience/declaration','encrypted uploads','download roundtrip','staff edit','payroll preserved','null assignments preserved','metadata injection rejected','four-day reusable invite','admin create']]);
 } catch (Throwable $error) {
     http_response_code(500);echo json_encode(['passed'=>false,'message'=>$error->getMessage()]);
 }

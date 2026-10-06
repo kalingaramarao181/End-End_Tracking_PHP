@@ -123,7 +123,7 @@ function employeeNormalizeCollection(array $input, array $existing = [], bool $p
     if (!is_array($declaration)) throw new InvalidArgumentException('Invalid declaration.');
     if ($public && ($declaration['accepted'] ?? false)!==true) throw new InvalidArgumentException('Please confirm the declaration before submitting.');
     $out['declaration']=$public?['accepted'=>true,'candidate_name'=>employeeCollectionText($declaration['candidate_name'] ?? '','Candidate name',250),'date'=>date('Y-m-d'),'accepted_at'=>date(DATE_ATOM)]:$declaration;
-    $review=$public?[]:($input['review'] ?? $existing['review'] ?? []);
+    $review=$public?($existing['review'] ?? []):($input['review'] ?? $existing['review'] ?? []);
     if (!is_array($review)) throw new InvalidArgumentException('Invalid review details.');
     $out['review']=['reviewed_by'=>employeeCollectionText($review['reviewed_by'] ?? '','Reviewed by',250),'date'=>employeeCollectionDate($review['date'] ?? '','Review date')];
     if (($out['review']['reviewed_by']==='')!==($out['review']['date']==='')) throw new InvalidArgumentException('Provide both reviewer name and review date.');
@@ -191,7 +191,18 @@ function employeeReceiveDocuments(array &$collection, array &$createdPaths): voi
 function employeeCleanupDocuments(array $paths): void {
     foreach ($paths as $path) if (is_file($path)) @unlink($path);
 }
-function employeeSaveCollection(int $employeeId, array $input, array $existing, array &$createdPaths, bool $public = false): void {
+function employeeEnforceDocumentLocks(array $collection,array $existing): void {
+    $locked=[];foreach($existing['documents']??[] as $doc)$locked[$doc['category']]=true;
+    foreach($_FILES['documents']['error']??[] as $category=>$errors){
+        if(isset($locked[$category]) && is_array($errors) && count(array_filter($errors,fn($error)=>$error!==UPLOAD_ERR_NO_FILE)))throw new InvalidArgumentException('This document is already uploaded. A user with employee-edit permission must update it.');
+    }
+    foreach(['education'=>['education_','_certificate','_marksheets'],'employment'=>['experience_',''],'certifications'=>['certification_','']] as $group=>$parts){
+        foreach($existing[$group]??[] as $row){$hasDocument=false;foreach(array_slice($parts,1) as $suffix)if(isset($locked[$parts[0].$row['id'].$suffix]))$hasDocument=true;
+            if($hasDocument && !in_array($row['id'],array_column($collection[$group]??[],'id'),true))throw new InvalidArgumentException('An entry with uploaded documents cannot be removed. Contact a user with employee-edit permission.');
+        }
+    }
+}
+function employeeSaveCollection(int $employeeId, array $input, array $existing, array &$createdPaths, bool $public = false, bool $lockDocuments = false): void {
     global $conn;
     if (!array_key_exists('collection',$input)) {
         if ($public || !empty($_FILES['documents'])) throw new InvalidArgumentException('Candidate information is required with document uploads.');
@@ -208,6 +219,7 @@ function employeeSaveCollection(int $employeeId, array $input, array $existing, 
         }
         if ($expected===false || $expected<0 || $expected!==$actual) throw new InvalidArgumentException('Some documents were not received. Upload fewer files and retry.');
     }
+    if($lockDocuments)employeeEnforceDocumentLocks($collection,$existing);
     employeeReceiveDocuments($collection,$createdPaths);
     $encrypted = payrollEncryptValue(json_encode($collection,JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR));
     $stmt = $conn->prepare('UPDATE employees SET candidate_collection=? WHERE id=?');

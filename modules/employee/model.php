@@ -127,12 +127,12 @@ function fetchEmployeeById($id) {
     $stmt = $conn->prepare("SELECT e.id, e.employee_id, e.firstname, e.lastname,
             TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) AS legal_name,
             e.address, e.birthdate, e.contact_info, e.gender, e.position_id,
-            e.schedule_id, e.photo, e.created_on, e.user_id, e.date_of_joining, e.payroll_email, e.candidate_collection,
+            e.schedule_id, e.photo, e.created_on, e.user_id, e.date_of_joining, e.payroll_email, e.candidate_collection, e.payroll_profile,
             u.nick_name AS company_name, u.email AS username,
             u.status AS user_status, u.last_login, p.position_name AS role
         FROM employees e
         LEFT JOIN users u ON u.id = e.user_id
-        LEFT JOIN positions p ON p.id = u.position_id
+        LEFT JOIN positions p ON p.id = COALESCE(u.position_id,e.position_id)
         WHERE e.id = ? LIMIT 1");
     $stmt->bind_param('i', $id);
     $stmt->execute();
@@ -140,6 +140,7 @@ function fetchEmployeeById($id) {
     if (!$row) return null;
     $row['collection'] = employeePublicCollection(employeeDecodeCollection($row['candidate_collection']));
     $row['upload_limits'] = employeeUploadLimits();
+    $row['payroll_profile']=payrollSecureData(json_decode($row['payroll_profile']??'[]',true)?:[],false);
     unset($row['candidate_collection']);
     return $row;
 }
@@ -231,13 +232,13 @@ function removeCompanyUser($employeeId) {
 // Call within the employee creation transaction. The singleton row also locks an empty employee table safely.
 function employeeNextCode(): string {
  global $conn;
- $result=$conn->query('SELECT `last_value` FROM employee_id_sequence WHERE id=1 FOR UPDATE');
- if(!$result || !($sequence=$result->fetch_assoc())) throw new RuntimeException('Apply the attendance configurations migration before creating employees.');
- $result=$conn->query("SELECT COALESCE(MAX(CAST(SUBSTRING(employee_id,7) AS UNSIGNED)),0) maximum FROM employees WHERE employee_id REGEXP '^EMP-I-[0-9]+$'");
+ $result=$conn->query('SELECT `last_value` FROM employee_id_sequence WHERE id=2 FOR UPDATE');
+ if(!$result || !($sequence=$result->fetch_assoc())) throw new RuntimeException('Apply the attendance configurations and 20261005_employee_profile_editing migrations before creating employees.');
+ $result=$conn->query("SELECT COALESCE(MAX(CAST(SUBSTRING(employee_id,7) AS UNSIGNED)),0) maximum FROM employees WHERE employee_id REGEXP '^BDT-I-[0-9]+$'");
  if(!$result) throw new RuntimeException('Employee IDs could not be allocated.');
  $next=max((int)$sequence['last_value'],(int)$result->fetch_assoc()['maximum'])+1;
- $stmt=$conn->prepare('UPDATE employee_id_sequence SET `last_value`=? WHERE id=1');$stmt->bind_param('i',$next);employeeExecute($stmt);
- return 'EMP-I-'.$next;
+ $stmt=$conn->prepare('UPDATE employee_id_sequence SET `last_value`=? WHERE id=2');$stmt->bind_param('i',$next);employeeExecute($stmt);
+ return 'BDT-I-'.str_pad((string)$next,3,'0',STR_PAD_LEFT);
 }
 function employeeValidateRecord(array $data, bool $create): array {
     foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender'] as $field) {
@@ -278,21 +279,51 @@ function createEmployeeRecord(array $data) {
         return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be saved. Check the employee ID and try again.'];
     }
 }
-function updateEmployeeRecord($id, array $data) {
+function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
     global $conn;
     $createdPaths=[];$transaction=false;
     try {
         $conn->begin_transaction();$transaction=true;
-        $lock=$conn->prepare('SELECT candidate_collection FROM employees WHERE id=? FOR UPDATE');
+        $lock=$conn->prepare('SELECT candidate_collection,payroll_profile FROM employees WHERE id=? FOR UPDATE');
         $lock->bind_param('i',$id);employeeExecute($lock);$record=$lock->get_result()->fetch_assoc();
         if (!$record) {$conn->rollback();return ['success'=>false,'not_found'=>true,'message'=>'Employee not found.'];}
         $existing=fetchEmployeeById($id);
+        if(isset($data['edit_section'])){
+            $section=(string)$data['edit_section'];
+            $sections=['personal'=>['email'],'family'=>['father_name','father_phone','mother_name','mother_phone','siblings'],'education'=>['education'],'experience'=>['has_experience','employment'],'certifications'=>['certifications','achievements','professional_certifications'],'references'=>['references'],'documents'=>[],'bank'=>[]];
+            if(!array_key_exists($section,$sections))throw new InvalidArgumentException('Invalid profile section.');
+            $saved=employeeDecodeCollection($record['candidate_collection']);
+            $patch=$data['collection']??[];if(!is_array($patch))throw new InvalidArgumentException('Invalid profile information.');
+            $collection=array_replace($saved,array_intersect_key($patch,array_flip($sections[$section])));
+            $allowed=$section==='personal'?['firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','date_of_joining']:($section==='bank'?['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']:[]);
+            $data=array_intersect_key($data,array_flip(array_merge($allowed,['document_upload_count'])));
+            if($section!=='bank')$data['collection']=$collection;
+            if($section==='personal' && empty($collection['email']))throw new InvalidArgumentException('Personal email is required.');
+            if($section==='family')foreach(['father_name','father_phone','mother_name','mother_phone'] as $field)if(trim((string)($collection[$field]??''))==='')throw new InvalidArgumentException('Please complete the parent names and phone numbers.');
+            if($section==='bank')foreach(['pan_number','bank_name','bank_account_number','ifsc_code'] as $field)if(trim((string)($data[$field]??''))==='')throw new InvalidArgumentException('Bank name, account number, IFSC and PAN are required.');
+        }
+        if($personalOnly){
+            $data=array_intersect_key($data,array_flip(['firstname','lastname','address','birthdate','contact_info','gender','collection','document_upload_count','pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']));
+            if(isset($data['collection']) && is_array($data['collection'])){
+                $saved=employeeDecodeCollection($record['candidate_collection']);
+                $data['collection']['selected_role']=$saved['selected_role']??'';
+                $data['collection']['review']=$saved['review']??[];
+            }
+        }
+        $data['employee_id']=$existing['employee_id'];
+        // Portrait changes use the validated photo-upload endpoint only.
+        $data['photo']=$existing['photo']??'';
+
         foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','photo','date_of_joining'] as $field) if (!array_key_exists($field,$data)) $data[$field]=$existing[$field] ?? '';
         $data=employeeValidateRecord($data,false);
         $stmt=$conn->prepare('UPDATE employees SET employee_id=?,firstname=?,lastname=?,address=?,birthdate=?,contact_info=?,gender=?,position_id=?,schedule_id=?,photo=?,date_of_joining=? WHERE id=?');
         $joining=$data['date_of_joining']?:null;
         $stmt->bind_param('sssssssiissi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining,$id);employeeExecute($stmt);
-        employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths);
+        employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths,false,$personalOnly);
+        $profile=payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false);
+        $profileChanged=false;
+        foreach(['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode'] as $field){if(array_key_exists($field,$data)){$profile[$field]=employeeCollectionText($data[$field],$field,250);$profileChanged=true;}}
+        if($profileChanged){$secured=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);$bank=$conn->prepare('UPDATE employees SET payroll_profile=? WHERE id=?');$bank->bind_param('si',$secured,$id);employeeExecute($bank);}
         $conn->commit();$transaction=false;
         return ['success'=>true,'message'=>'Employee information and documents updated.'];
     } catch (Throwable $error) {

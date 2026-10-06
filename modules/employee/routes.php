@@ -18,6 +18,7 @@ if ($method === 'GET' && $path === 'attendance/leaves/email-review') {
 
 if ($method === 'GET' && preg_match('#^employee-onboarding/([a-f0-9]{64})$#',$path,$matches)) { payrollOnboardingStatus($matches[1]); exit; }
 if ($method === 'POST' && preg_match('#^employee-onboarding/([a-f0-9]{64})$#',$path,$matches)) { payrollSubmitOnboarding($matches[1]); exit; }
+if ($method==='GET' && preg_match('#^employee-onboarding/([a-f0-9]{64})/documents/([a-f0-9]{32})$#',$path,$matches)){payrollOnboardingDocument($matches[1],$matches[2]);exit;}
 $user = authenticate();
 $employeePermission=getEffectivePermission('employees');
 $attendancePermission=getEffectivePermission('attendance');
@@ -61,6 +62,12 @@ if ($method === 'GET' && $path === 'employees/available-users') {
     requirePermission('employees','can_assign');
     getAvailableCompanyNames();
     exit;
+}
+if (in_array($method,['POST','PUT'],true) && $path==='employees/me'){
+    requirePermission('profile','can_view');
+    $employee=fetchEmployeeForUser((int)$user['id']);
+    if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'No employee profile is linked to this login.']);exit;}
+    $result=updateEmployeeRecord((int)$employee['id'],employeeRequestData(),true);http_response_code($result['success']?200:422);echo json_encode($result);exit;
 }
 if ($method === 'GET' && $path === 'employees/me') {
     requirePermission('profile','can_view');
@@ -144,6 +151,14 @@ if ($method === 'PUT' && preg_match('#^employees/(\d+)/attendance/(\d{4}-\d{2}-\
     }
     setEmployeeAttendanceDate((int)$matches[1], $matches[2]);
     exit;
+}
+if (in_array($method,['GET','POST'],true) && preg_match('#^employees/(\d+)/photo$#',$path,$matches)) {
+    $employeeId=(int)$matches[1];$own=fetchEmployeeForUser((int)$user['id']);
+    if($own && (int)$own['id']===$employeeId){requirePermission('profile','can_view');}
+    else {requirePermission('employees',$method==='GET'?'can_view':'can_edit');if(!$isAdmin)employeeAdminDenied();}
+    require_once __DIR__.'/EmployeePhotoService.php';
+    if($method==='GET'){employeeReadPhoto($employeeId);exit;}
+    $result=employeeSavePhoto($employeeId,$_FILES['photo']??[]);http_response_code($result['success']?200:422);echo json_encode($result);exit;
 }
 if ($method === 'GET' && preg_match('#^employees/(\d+)/documents/([a-f0-9]{32})$#',$path,$matches)) {
     $employeeId=(int)$matches[1];

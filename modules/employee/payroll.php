@@ -92,12 +92,36 @@ function payrollCreateOnboardingInvite($user) {
     }
     return ['success'=>true,'message'=>'Pre-offer invitation sent to '.$email.'.','public_url'=>$url,'expires_in_days'=>7,'role_name'=>employeePreOfferRoles()[$role]['name']];
 }
+function employeeOnboardingAvailable(array $invite): bool {
+    if(!empty($invite['completed_at'])) return !empty($invite['employee_id']) && time()<strtotime($invite['completed_at'].' +4 days');
+    return strtotime($invite['expires_at'])>time();
+}
+function employeeOnboardingRecord(array $invite): ?array {
+    global $conn;
+    $stmt=$conn->prepare('SELECT * FROM employees WHERE id=?');$id=(int)$invite['employee_id'];$stmt->bind_param('i',$id);employeeExecute($stmt);return $stmt->get_result()->fetch_assoc();
+}
 function payrollOnboardingStatus($token) {
+    header("Cache-Control: no-store");header("Referrer-Policy: no-referrer");
     global $conn;$hash=hash('sha256',(string)$token);
-    $stmt=$conn->prepare('SELECT personal_email,expires_at,completed_at,selected_role,candidate_name FROM employee_onboarding_invites WHERE token_hash=?');
-    $stmt->bind_param('s',$hash);employeeExecute($stmt);$row=$stmt->get_result()->fetch_assoc();
-    if (!$row || $row['completed_at'] || strtotime($row['expires_at'])<time()) {http_response_code(410);echo json_encode(['success'=>false,'message'=>'This onboarding link is invalid, expired, or already completed.']);return;}
-    echo json_encode(['success'=>true,'personal_email'=>$row['personal_email'],'candidate_name'=>$row['candidate_name'] ?? '','role_name'=>employeePreOfferRoles()[$row['selected_role'] ?? '']['name'] ?? '','upload_limits'=>employeeUploadLimits()]);
+    $stmt=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=?');$stmt->bind_param('s',$hash);employeeExecute($stmt);$row=$stmt->get_result()->fetch_assoc();
+    if(!$row || !employeeOnboardingAvailable($row)){http_response_code(410);echo json_encode(['success'=>false,'message'=>'This link is invalid or its editing window has expired. Please contact HR.']);return;}
+    $result=['success'=>true,'personal_email'=>$row['personal_email'],'candidate_name'=>$row['candidate_name']??'','role_name'=>employeePreOfferRoles()[$row['selected_role']??'']['name']??'','upload_limits'=>employeeUploadLimits(),'submitted'=>!empty($row['completed_at'])];
+    if($result['submitted']){
+        $record=employeeOnboardingRecord($row);
+        if(!$record){http_response_code(410);echo json_encode(['success'=>false,'message'=>'This employee record is unavailable. Please contact HR.']);return;}
+        $result['edit_until']=(new DateTimeImmutable($row['completed_at']))->modify('+4 days')->format(DATE_ATOM);
+        $result['employee_id']=$record['employee_id'];
+        $result['data']=array_intersect_key($record,array_flip(['firstname','lastname','address','birthdate','contact_info','gender','date_of_joining']));
+        $profile=payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false);
+        foreach(['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode','department'] as $key)$result['data'][$key]=$profile[$key]??'';
+        $result['data']['collection']=employeePublicCollection(employeeDecodeCollection($record['candidate_collection']));
+    }
+    echo json_encode($result);
+}
+function payrollOnboardingDocument($token,$documentId){
+    global $conn;$hash=hash('sha256',$token);$stmt=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=?');$stmt->bind_param('s',$hash);employeeExecute($stmt);$row=$stmt->get_result()->fetch_assoc();
+    if(!$row || empty($row['completed_at']) || !employeeOnboardingAvailable($row)){http_response_code(410);echo json_encode(['success'=>false,'message'=>'This document link has expired.']);return;}
+    employeeDownloadDocument((int)$row['employee_id'],$documentId);
 }
 function payrollSubmitOnboarding($token) {
     global $conn;
@@ -117,16 +141,25 @@ function payrollSubmitOnboarding($token) {
         employeeNormalizeCollection($in['collection'],[],true);
         $hash=hash('sha256',(string)$token);
         $conn->begin_transaction();$transaction=true;
-        $stmt=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=? AND completed_at IS NULL AND expires_at>NOW() FOR UPDATE');
+        $stmt=$conn->prepare('SELECT * FROM employee_onboarding_invites WHERE token_hash=? FOR UPDATE');
         $stmt->bind_param('s',$hash);employeeExecute($stmt);$invite=$stmt->get_result()->fetch_assoc();
-        if (!$invite) throw new DomainException('This onboarding link is invalid, expired, or already completed.');
+        if (!$invite || !employeeOnboardingAvailable($invite)) throw new DomainException('This link is invalid or its four-day editing window has expired. Please contact HR.');
         if (strcasecmp(trim($in['collection']['email']),$invite['personal_email'])!==0) throw new InvalidArgumentException('Use the email address associated with your onboarding invitation.');
-        $employeeCode=employeeNextCode();
-        $profile=[];
+        $editing=!empty($invite['completed_at']);
+        $existingCollection=[];
+        if($editing){
+            $lock=$conn->prepare('SELECT * FROM employees WHERE id=? FOR UPDATE');$employeeId=(int)$invite['employee_id'];$lock->bind_param('i',$employeeId);employeeExecute($lock);$record=$lock->get_result()->fetch_assoc();
+            if(!$record)throw new DomainException('This employee record is unavailable. Please contact HR.');
+            $employeeCode=$record['employee_id'];$existingCollection=employeeDecodeCollection($record['candidate_collection']);
+            $in['date_of_joining']=$record['date_of_joining']??'';
+        }else{$employeeCode=employeeNextCode();}
+
+        $profile=$editing?(payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false)):[];
         foreach (['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode','department'] as $key) $profile[$key]=employeeCollectionText($in[$key] ?? ($key==='pay_mode'?'Bank Transfer':''),$key,250);
-        $profile+=['father_name'=>employeeCollectionText($in['collection']['father_name'] ?? '','Father name'),
-            'date_of_joining'=>$in['date_of_joining'],'location'=>'Visakhapatnam','date_of_birth'=>$in['birthdate'],'gender'=>$in['gender'],'permanent_address'=>$in['address']];
+        $profile=array_merge($profile,['father_name'=>employeeCollectionText($in['collection']['father_name'] ?? '','Father name'),
+            'date_of_joining'=>$in['date_of_joining'],'location'=>'Visakhapatnam','date_of_birth'=>$in['birthdate'],'gender'=>$in['gender'],'permanent_address'=>$in['address']]);
         $profileJson=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
+        if(!$editing){
         $rawSalary=$in['monthly_salary'] ?? '';
         if (!is_scalar($rawSalary) || ($rawSalary!=='' && (!is_numeric($rawSalary) || (float)$rawSalary<0 || (float)$rawSalary>9999999999.99))) throw new InvalidArgumentException('Monthly salary must be a valid non-negative amount.');
         $salary=(float)$rawSalary;
@@ -134,12 +167,16 @@ function payrollSubmitOnboarding($token) {
         $joining=$in["date_of_joining"]?:null;
         $insert->bind_param('ssssssssdss',$employeeCode,$in['firstname'],$in['lastname'],$in['address'],$in['birthdate'],$joining,$in['contact_info'],$invite['personal_email'],$salary,$in['gender'],$profileJson);
         employeeExecute($insert);$employeeId=(int)$conn->insert_id;
+        }else{
+            $update=$conn->prepare('UPDATE employees SET firstname=?,lastname=?,address=?,birthdate=?,contact_info=?,gender=?,payroll_profile=? WHERE id=?');
+            $update->bind_param('sssssssi',$in['firstname'],$in['lastname'],$in['address'],$in['birthdate'],$in['contact_info'],$in['gender'],$profileJson,$employeeId);employeeExecute($update);
+        }
         $in["collection"]["selected_role"]=$invite["selected_role"] ?? "";
-        employeeSaveCollection($employeeId,$in,[],$createdPaths,true);
-        $done=$conn->prepare('UPDATE employee_onboarding_invites SET completed_at=NOW(),employee_id=? WHERE id=?');
+        employeeSaveCollection($employeeId,$in,$existingCollection,$createdPaths,true,$editing);
+        $done=$conn->prepare('UPDATE employee_onboarding_invites SET completed_at=COALESCE(completed_at,NOW()),employee_id=? WHERE id=?');
         $done->bind_param('ii',$employeeId,$invite['id']);employeeExecute($done);
         $conn->commit();$transaction=false;
-        echo json_encode(['success'=>true,'message'=>'Your information and documents were submitted successfully.','employee_id'=>$employeeCode]);
+        echo json_encode(['success'=>true,'message'=>$editing?'Your information and documents were updated successfully.':'Your information and documents were submitted successfully.','employee_id'=>$employeeCode,'edit_until'=>(new DateTimeImmutable($invite['completed_at']?:'now'))->modify('+4 days')->format(DATE_ATOM)]);
     } catch (Throwable $error) {
         if ($transaction) $conn->rollback();
         employeeCleanupDocuments($createdPaths);
