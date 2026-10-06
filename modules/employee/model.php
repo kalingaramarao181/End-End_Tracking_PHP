@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/AttendancePolicyService.php';
 require_once __DIR__ . '/EmployeeCollectionService.php';
+require_once __DIR__ . '/EmployeeProfileCompletion.php';
 
 function getEmployeeByUsername($username) {
     global $conn;
@@ -44,7 +45,7 @@ function fetchEmployees($filters) {
 
     $stmt = $conn->prepare("SELECT e.id, e.employee_id, e.firstname, e.lastname,
             TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) AS legal_name,
-            e.contact_info, e.gender, e.position_id, e.photo, e.created_on,
+            e.contact_info, e.gender, e.birthdate, e.payroll_email, e.candidate_collection, e.payroll_profile, e.position_id, e.photo, e.created_on,
             e.user_id, u.nick_name AS company_name, u.email AS username,
             u.status AS user_status, p.position_name AS role
         FROM employees e
@@ -58,7 +59,13 @@ function fetchEmployees($filters) {
     $stmt->execute();
     $rows = [];
     $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) $rows[] = $row;
+    while ($row = $result->fetch_assoc()) {
+        $collection=employeeDecodeCollection($row['candidate_collection']);
+        $payroll=payrollSecureData(json_decode($row['payroll_profile']??'[]',true)?:[],false);
+        $row['profile_completion']=employeeProfileCompletionPercentage($row,$collection,$payroll);
+        unset($row['candidate_collection'],$row['payroll_profile'],$row['payroll_email']);
+        $rows[]=$row;
+    }
     return ['data' => $rows, 'total' => $total];
 }
 
@@ -243,10 +250,12 @@ function employeeNextCode(): string {
 function employeeValidateRecord(array $data, bool $create): array {
     foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender'] as $field) {
         $data[$field]=employeeCollectionText($data[$field] ?? '',$field,$field==='address'?5000:250);
-        if ($data[$field]==='' && !($create && $field==='employee_id')) throw new InvalidArgumentException($field.' is required.');
+        if ($data[$field]==='' && !in_array($field,['employee_id','address'],true)) throw new InvalidArgumentException($field.' is required.');
     }
+    $data['employee_id']=$data['employee_id']===''?null:$data['employee_id'];
+    if ($data['employee_id']!==null && !preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/',$data['employee_id'])) throw new InvalidArgumentException('Employee ID must contain up to 50 letters, numbers, hyphens or underscores.');
     $data['birthdate']=employeeCollectionDate($data['birthdate'],'Birth date',true);
-    $data['date_of_joining']=employeeCollectionDate($data['date_of_joining'] ?? '','Date of joining');
+    $data['date_of_joining']=employeeCollectionDate(($data['date_of_joining']??'')==='0000-00-00'?'':($data['date_of_joining']??''),'Date of joining');
     if (!in_array($data['gender'],['Male','Female','Other'],true)) throw new InvalidArgumentException('Select a valid gender.');
     if ($create && empty($data['position_id'])) throw new InvalidArgumentException('Position is required.');
     foreach (['position_id','schedule_id'] as $field) {
@@ -262,19 +271,21 @@ function createEmployeeRecord(array $data) {
     global $conn;
     $createdPaths=[];$transaction=false;
     try {
-        $data['employee_id']=''; // Employee codes are always allocated by the server.
         $data=employeeValidateRecord($data,true);
         $conn->begin_transaction();$transaction=true;
-        $data['employee_id']=employeeNextCode();
         $stmt=$conn->prepare('INSERT INTO employees(employee_id,firstname,lastname,address,birthdate,contact_info,gender,position_id,schedule_id,photo,date_of_joining,created_on) VALUES(?,?,?,?,?,?,?,?,?,?,?,NOW())');
         $joining=$data['date_of_joining']?:null;
         $stmt->bind_param('sssssssiiss',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining);
         employeeExecute($stmt);$id=(int)$conn->insert_id;
         employeeSaveCollection($id,$data,[],$createdPaths);
+        $profile=[];
+        foreach(['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode'] as $field) if(array_key_exists($field,$data))$profile[$field]=employeeCollectionText($data[$field],$field,250);
+        if($profile){$secured=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);$bank=$conn->prepare('UPDATE employees SET payroll_profile=? WHERE id=?');$bank->bind_param('si',$secured,$id);employeeExecute($bank);}
         $conn->commit();$transaction=false;
-        return ['success'=>true,'message'=>'Employee information and documents saved. Employee ID: '.$data['employee_id'], 'employee_id'=>$data['employee_id'],'id'=>$id];
+        return ['success'=>true,'message'=>'Employee information and documents saved.', 'employee_id'=>$data['employee_id'],'id'=>$id];
     } catch (Throwable $error) {
         if ($transaction) $conn->rollback();employeeCleanupDocuments($createdPaths);
+        if ((int)$error->getCode()===1062) return ['success'=>false,'message'=>'This employee ID is already assigned to another employee.'];
         if (!($error instanceof InvalidArgumentException)) error_log('Create employee: '.$error->getMessage());
         return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be saved. Check the employee ID and try again.'];
     }
@@ -295,11 +306,11 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
             $saved=employeeDecodeCollection($record['candidate_collection']);
             $patch=$data['collection']??[];if(!is_array($patch))throw new InvalidArgumentException('Invalid profile information.');
             $collection=array_replace($saved,array_intersect_key($patch,array_flip($sections[$section])));
-            $allowed=$section==='personal'?['firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','date_of_joining']:($section==='bank'?['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']:[]);
+            $allowed=$section==='personal'?['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','date_of_joining']:($section==='bank'?['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']:[]);
             $data=array_intersect_key($data,array_flip(array_merge($allowed,['document_upload_count'])));
             if($section!=='bank')$data['collection']=$collection;
             if($section==='personal' && empty($collection['email']))throw new InvalidArgumentException('Personal email is required.');
-            if($section==='family')foreach(['father_name','father_phone','mother_name','mother_phone'] as $field)if(trim((string)($collection[$field]??''))==='')throw new InvalidArgumentException('Please complete the parent names and phone numbers.');
+            if($section==='family')foreach(['father_name','mother_name'] as $field)if(trim((string)($collection[$field]??''))==='')throw new InvalidArgumentException('Please complete the parent names.');
             if($section==='bank')foreach(['pan_number','bank_name','bank_account_number','ifsc_code'] as $field)if(trim((string)($data[$field]??''))==='')throw new InvalidArgumentException('Bank name, account number, IFSC and PAN are required.');
         }
         if($personalOnly){
@@ -310,7 +321,10 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
                 $data['collection']['review']=$saved['review']??[];
             }
         }
-        $data['employee_id']=$existing['employee_id'];
+        $assigned=trim((string)($existing['employee_id']??''));
+        $requested=trim((string)($data['employee_id']??$assigned));
+        if (!$personalOnly && $assigned!=='' && $requested!==$assigned) throw new InvalidArgumentException('Employee ID has already been assigned and cannot be replaced or removed.');
+        $data['employee_id']=$personalOnly?($assigned?:null):($requested?:null);
         // Portrait changes use the validated photo-upload endpoint only.
         $data['photo']=$existing['photo']??'';
 
@@ -321,13 +335,16 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
         $stmt->bind_param('sssssssiissi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining,$id);employeeExecute($stmt);
         employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths,false,$personalOnly);
         $profile=payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false);
-        $profileChanged=false;
+        $profileChanged=true;
+        $profile['date_of_joining']=$data['date_of_joining'];$profile['date_of_birth']=$data['birthdate'];$profile['gender']=$data['gender'];$profile['permanent_address']=$data['address'];
+        if(isset($data['collection']['father_name']))$profile['father_name']=employeeCollectionText($data['collection']['father_name'],'Father name',500);
         foreach(['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode'] as $field){if(array_key_exists($field,$data)){$profile[$field]=employeeCollectionText($data[$field],$field,250);$profileChanged=true;}}
         if($profileChanged){$secured=json_encode(payrollSecureData($profile,true),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);$bank=$conn->prepare('UPDATE employees SET payroll_profile=? WHERE id=?');$bank->bind_param('si',$secured,$id);employeeExecute($bank);}
         $conn->commit();$transaction=false;
         return ['success'=>true,'message'=>'Employee information and documents updated.'];
     } catch (Throwable $error) {
         if ($transaction) $conn->rollback();employeeCleanupDocuments($createdPaths);
+        if ((int)$error->getCode()===1062) return ['success'=>false,'message'=>'This employee ID is already assigned to another employee.'];
         if (!($error instanceof InvalidArgumentException)) error_log('Update employee: '.$error->getMessage());
         return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Employee could not be updated. Check the employee ID and try again.'];
     }
@@ -356,7 +373,7 @@ function fetchEmployeeForUser($userId) {
     return $row ? fetchEmployeeById((int)$row['id']) : null;
 }
 
-function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) {
+function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20, array $filters=[]) {
     global $conn;
     $page=max(1,(int)$page);$limit=min(100,max(1,(int)$limit));$offset=($page-1)*$limit;
     $hoursExpression="CASE WHEN time_out<>'00:00:00' AND time_out>time_in
@@ -371,19 +388,24 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
     $summary=$summaryStmt->get_result()->fetch_assoc();
     foreach(['present_days','on_time_days','late_days','half_days'] as $key)$summary[$key]=(int)$summary[$key];
     foreach(['average_hours','total_hours'] as $key)$summary[$key]=(float)($summary[$key]??0);
-    $countStmt=$conn->prepare('SELECT COUNT(*) total FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ?');
-    $countStmt->bind_param('iss',$employeeId,$startDate,$endDate);$countStmt->execute();
+    $historyWhere='employee_id=? AND date BETWEEN ? AND ?';$historyTypes='iss';$historyParams=[(int)$employeeId,$startDate,$endDate];
+    $statusClause=['on_time'=>'status=1','late'=>'status=0','half_day'=>"work_status='half_day'",'working'=>"time_out='00:00:00'",'completed'=>"work_status='completed'"];
+    if(isset($statusClause[$filters['status']??'all']))$historyWhere.=' AND '.$statusClause[$filters['status']];
+    if(!empty($filters['month'])){$historyWhere.=' AND DATE_FORMAT(date,\'%Y-%m\')=?';$historyTypes.='s';$historyParams[]=$filters['month'];}
+    if(!empty($filters['search_date'])){$historyWhere.=' AND date=?';$historyTypes.='s';$historyParams[]=$filters['search_date'];}
+    $countStmt=$conn->prepare('SELECT COUNT(*) total FROM attendance WHERE '.$historyWhere);
+    $countStmt->bind_param($historyTypes,...$historyParams);$countStmt->execute();
     $total=(int)$countStmt->get_result()->fetch_assoc()['total'];
     $stmt=$conn->prepare("SELECT id,date,time_in,time_out,status,admin_created,work_status,source,notes,
         ROUND($hoursExpression,2) hours
-        FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ? ORDER BY date DESC,id DESC LIMIT ? OFFSET ?");
-    $stmt->bind_param('issii',$employeeId,$startDate,$endDate,$limit,$offset);$stmt->execute();
+        FROM attendance WHERE $historyWhere ORDER BY date DESC,id DESC LIMIT ? OFFSET ?");
+    $recordParams=array_merge($historyParams,[$limit,$offset]);$stmt->bind_param($historyTypes.'ii',...$recordParams);$stmt->execute();
     $records=[];$result=$stmt->get_result();while($row=$result->fetch_assoc()){$row['id']=(int)$row['id'];$row['status']=(int)$row['status'];$row['admin_created']=(int)$row['admin_created'];$records[]=$row;}
     $trendStmt=$conn->prepare("SELECT date,ROUND(SUM($hoursExpression),2) hours,
         MAX(status) status FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date");
     $trendStmt->bind_param('iss',$employeeId,$startDate,$endDate);$trendStmt->execute();
     $trend=[];$result=$trendStmt->get_result();while($row=$result->fetch_assoc())$trend[]=$row;
-    $calendarStmt=$conn->prepare('SELECT date,MAX(admin_created) admin_created FROM attendance
+    $calendarStmt=$conn->prepare('SELECT date,MAX(admin_created) admin_created,MAX(work_status=\'half_day\') half_day FROM attendance
         WHERE employee_id=? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date');
     $calendarStmt->bind_param('iss',$employeeId,$startDate,$endDate);$calendarStmt->execute();
     $calendar=[];$result=$calendarStmt->get_result();while($row=$result->fetch_assoc()){$row['admin_created']=(int)$row['admin_created'];$calendar[]=$row;}
@@ -395,6 +417,9 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
         WHERE employee_id=? AND status='approved' AND start_date<=? AND end_date>=? ORDER BY start_date");
     $leaveStmt->bind_param('iss',$employeeId,$endDate,$startDate);$leaveStmt->execute();
     $leaves=$leaveStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $holidayDates=[];foreach($holidays as $holiday)if(!(int)$holiday['is_optional'])$holidayDates[$holiday['date']]=true;
+    $leaveDays=[];foreach($leaves as $leave){$first=new DateTimeImmutable(max($startDate,$leave['start_date']));$last=min($endDate,$leave['end_date']);for($day=$first;$day->format('Y-m-d')<=$last;$day=$day->modify('+1 day')){if((int)$day->format('N')>=6||isset($holidayDates[$day->format('Y-m-d')]))continue;$key=$day->format('Y-m-d');$leaveDays[$key]=max($leaveDays[$key]??0,$leave['duration']==='full_day'?1:.5);}}
+    $summary['leave_days']=array_sum($leaveDays);
     return ['success'=>true,'summary'=>$summary,'trend'=>$trend,'calendar'=>$calendar,'holidays'=>$holidays,
         'leaves'=>$leaves,'data'=>$records,'total'=>$total,'page'=>$page,'limit'=>$limit,
         'pagination'=>[
@@ -408,7 +433,14 @@ function fetchAttendance($employeeId, $startDate, $endDate, $page=1, $limit=20) 
 function attendanceSettings() {
     global $conn;
     $result=$conn->query('SELECT * FROM attendance_settings WHERE id=1');
-    return $result->fetch_assoc();
+    $settings=$result->fetch_assoc();
+    $settings['grace_minutes']=30;
+    return $settings;
+}
+
+function attendanceOnTime(string $time,array $settings):int {
+    $cutoff=(new DateTimeImmutable('2000-01-01 '.$settings['work_start'],new DateTimeZone('America/New_York')))->modify('+30 minutes')->format('H:i:s');
+    return $time<=$cutoff?1:0;
 }
 
 function newYorkNow() {
@@ -524,7 +556,7 @@ function clockAttendance($employeeId,$userId,$action) {
         $stmt->bind_param('is',$employeeId,$date);$stmt->execute();$record=$stmt->get_result()->fetch_assoc();
         if($action==='in'){
             if($record)throw new DomainException($record['time_out']==='00:00:00'?'You are already timed in.':'Attendance is already completed for today.');
-            $onTime=$time<=date('H:i:s',strtotime($settings['work_start'].' +'.(int)$settings['grace_minutes'].' minutes'))?1:0;
+            $onTime=attendanceOnTime($time,$settings);
             $zero='00:00:00';$hours=0.0;$admin=0;$workStatus='working';$source='self_service';
             $stmt=$conn->prepare('INSERT INTO attendance
                 (employee_id,date,time_in,time_out,status,admin_created,work_status,source,num_hr,clock_in_utc,clock_in_ip,updated_by)
@@ -630,7 +662,7 @@ function adminEditAttendance($id,$data,$userId) {
         return ['success'=>false,'message'=>'Valid time in and later time out are required.'];
     $hours=round((strtotime($timeOut)-strtotime($timeIn))/3600,2);$settings=attendanceSettings();
     $workStatus=$hours<(float)$settings['half_day_below_hours']?'half_day':'completed';
-    $status=$timeIn<=date('H:i:s',strtotime($settings['work_start'].' +'.(int)$settings['grace_minutes'].' minutes'))?1:0;
+    $status=attendanceOnTime($timeIn,$settings);
     $stmt=$conn->prepare("UPDATE attendance SET time_in=?,time_out=?,num_hr=?,work_status=?,status=?,notes=?,source='admin',updated_by=? WHERE id=?");
     $stmt->bind_param('ssdsssii',$timeIn,$timeOut,$hours,$workStatus,$status,$notes,$userId,$id);$stmt->execute();
     return $stmt->affected_rows>=0?['success'=>true,'message'=>'Attendance updated.','hours'=>$hours,'work_status'=>$workStatus]:['success'=>false,'message'=>'Attendance record not found.'];

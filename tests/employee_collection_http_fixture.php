@@ -16,6 +16,7 @@ foreach (['employees','employee_onboarding_invites'] as $table) {
     $conn->query($definition);
     testCheck((int)$conn->query('SELECT COUNT(*) n FROM `'.$table.'`')->fetch_assoc()['n']===0,'Test table is not isolated');
 }
+$conn->query('ALTER TABLE employees MODIFY employee_id VARCHAR(50) NULL DEFAULT NULL');
 $token=str_repeat('b',64);$hash=hash('sha256',$token);$email='candidate@example.invalid';
 $stmt=$conn->prepare('INSERT INTO employee_onboarding_invites(personal_email,token_hash,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 1 DAY))');
 $stmt->bind_param('ss',$email,$hash);$stmt->execute();
@@ -80,7 +81,8 @@ try {
     testCheck($saved['declaration']===$collection['declaration'],'Staff overwrote candidate declaration');
     testCheck(count($saved['documents'])===count($collection['documents']),'Client injected document metadata');
     testCheck($updated['position_id']===null && $updated['schedule_id']===null,'Unassigned employee position or schedule was changed');
-    testCheck($updated['payroll_profile']===$record['payroll_profile'],'Employee edit overwrote payroll profile');
+    $beforeProfile=payrollSecureData(json_decode($record['payroll_profile'],true),false);$afterProfile=payrollSecureData(json_decode($updated['payroll_profile'],true),false);
+    foreach(['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code'] as $key)testCheck(($afterProfile[$key]??'')===($beforeProfile[$key]??''),'Employee edit overwrote '.$key);
 
     // Reopening and editing must target the original employee without extending the deadline.
     http_response_code(200);ob_start();payrollOnboardingStatus($token);$reopened=json_decode(ob_get_clean(),true);
@@ -115,18 +117,25 @@ try {
     catch (InvalidArgumentException $expected) {}
     // Add Employee supports the same collection and does not claim a candidate signed it.
     $data=employeeRequestData();$data['document_upload_count']=0;$data['employee_id']='TEST-ADMIN-1';$data['position_id']=1;
+    $data['pan_number']='ABCDE1234F';$data['bank_account_number']='123456789012';
     $data['collection']['review']=['reviewed_by'=>'HR Reviewer','date'=>'2026-10-02'];
     $created=createEmployeeRecord($data);testCheck($created['success'],'Admin employee create failed: '.json_encode($created));
     $admin=fetchEmployeeById($created['id']);
-    testCheck($record['employee_id']==='BDT-I-001' && $admin['employee_id']==='BDT-I-002' && $created['employee_id']==='BDT-I-002','Manual/public IDs are not sequential or client ID was trusted');
-    $conn->begin_transaction();$rolledBack=employeeNextCode();$conn->rollback();
-    $conn->begin_transaction();$nextCode=employeeNextCode();$conn->rollback();
-    testCheck($rolledBack==='BDT-I-003' && $nextCode==='BDT-I-003','ID allocator rollback failed');
-    $conn->query("UPDATE employees SET employee_id='BDT-I-132' WHERE id=".(int)$admin['id']);
-    $conn->begin_transaction();$afterExisting=employeeNextCode();$conn->rollback();testCheck($afterExisting==='BDT-I-133','Allocator did not continue highest existing BDT ID');
+    testCheck($admin['payroll_profile']['pan_number']==='ABCDE1234F' && $admin['payroll_profile']['bank_account_number']==='123456789012','HR-created banking details were not saved');
+    $optional=updateEmployeeRecord($created['id'],['edit_section'=>'family','collection'=>['father_name'=>'Father','mother_name'=>'Mother','father_phone'=>'','mother_phone'=>'']]);testCheck($optional['success'],'Optional parent phones rejected');
+    testCheck($record['employee_id']===null && $admin['employee_id']==='TEST-ADMIN-1','Public ID should remain null; staff manual ID was not saved');
+    $assigned=updateEmployeeRecord($id,['employee_id'=>'BDT-I-133','address'=>'','date_of_joining'=>'2026-10-01']);
+    $assignedProfile=fetchEmployeeById($id);testCheck($assignedProfile['payroll_profile']['date_of_joining']==='2026-10-01' && $assignedProfile['payroll_profile']['permanent_address']==='','DOJ/address were not synchronized');
+    testCheck($assigned['success'],'Staff ID assignment / optional address / DOJ save failed: '.json_encode($assigned));
+    $replacement=updateEmployeeRecord($id,['employee_id'=>'BDT-I-134']);
+    testCheck(!$replacement['success'],'Assigned employee ID could be replaced');
+    $duplicate=updateEmployeeRecord($admin['id'],['employee_id'=>'BDT-I-133']);
+    testCheck(!$duplicate['success'],'Assigned staff ID could be replaced');
+    $unassigned=createEmployeeRecord(array_merge($data,['employee_id'=>null]));testCheck($unassigned['success'],'Nullable staff employee creation failed');
+    $duplicate=updateEmployeeRecord($unassigned['id'],['employee_id'=>'BDT-I-133']);testCheck(!$duplicate['success'],'Duplicate employee ID accepted');
     $personal=updateEmployeeRecord($id,['firstname'=>'Updated','employee_id'=>'FORGED','position_id'=>99,'schedule_id'=>99,'date_of_joining'=>'2020-01-01','monthly_salary'=>999999,'collection'=>array_merge($saved,['selected_role'=>'hr','review'=>['reviewed_by'=>'Forged','date'=>'2026-10-01']])],true);
     testCheck($personal['success'],'Owner edit failed');$ownerAfter=$conn->query('SELECT * FROM employees WHERE id='.(int)$id)->fetch_assoc();
-    testCheck($ownerAfter['firstname']==='Updated' && $ownerAfter['employee_id']==='BDT-I-001' && $ownerAfter['position_id']===null && $ownerAfter['schedule_id']===null && $ownerAfter['date_of_joining']===null,'Personal edit changed protected fields');
+    testCheck($ownerAfter['firstname']==='Updated' && $ownerAfter['employee_id']==='BDT-I-133' && $ownerAfter['position_id']===null && $ownerAfter['schedule_id']===null && $ownerAfter['date_of_joining']==='2026-10-01','Personal edit changed protected fields');
     testCheck($ownerAfter['monthly_salary']===$record['monthly_salary'],'Personal edit changed salary');
     $ownerCollection=employeeDecodeCollection($ownerAfter['candidate_collection']);testCheck($ownerCollection['selected_role']==='web_developer' && $ownerCollection['review']['reviewed_by']==='HR Reviewer','Personal edit forged role or review');
     if(!empty($ownerCollection['documents'])){
@@ -138,7 +147,7 @@ try {
     $sectionEdit=updateEmployeeRecord($id,['edit_section'=>'education','firstname'=>'Should not change','bank_name'=>'Should not change','collection'=>array_merge($ownerCollection,['father_name'=>'Should not change'])],true);
     testCheck($sectionEdit['success'],'Education section save failed');$sectionAfter=fetchEmployeeById($id);testCheck($sectionAfter['firstname']==='Updated' && $sectionAfter['collection']['father_name']===$ownerCollection['father_name'],'Section save overwrote unrelated profile details');
     testCheck(!$admin['collection']['declaration']['accepted'],'Admin forged candidate declaration');
-    testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===2,'Admin create did not persist');
+    testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===3,'Admin create did not persist');
     http_response_code(200);
     echo json_encode(['passed'=>true,'mode'=>$mode,'checks'=>['public submit','encrypted details','family/experience/declaration','encrypted uploads','download roundtrip','staff edit','payroll preserved','null assignments preserved','metadata injection rejected','four-day reusable invite','admin create']]);
 } catch (Throwable $error) {

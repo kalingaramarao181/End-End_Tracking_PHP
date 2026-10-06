@@ -4,10 +4,12 @@ function employeePhotoNameIsValid(string $name): bool {
     return (bool)preg_match('/^[a-f0-9]{32}\.photo\.enc$/D', $name);
 }
 function employeeValidatePhoto(array $file): array {
-    if (($file['error'] ?? UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new InvalidArgumentException('Photo upload failed. Choose an image up to 2 MB.');
+    $limits=employeeUploadLimits();$max=min(2097152,$limits['max_file_bytes'],$limits['max_total_bytes']);
+    $limit=number_format($max/1048576,1);
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK) throw new InvalidArgumentException('Photo upload failed. Choose an image up to '.$limit.' MB.');
     $path=$file['tmp_name'] ?? '';
     $size=is_file($path)?filesize($path):0;
-    if (!$size || $size>2097152) throw new InvalidArgumentException('Choose an image up to 2 MB.');
+    if (!$size || $size>$max) throw new InvalidArgumentException('Choose an image up to '.$limit.' MB.');
     $mime=(new finfo(FILEINFO_MIME_TYPE))->file($path);
     $info=@getimagesize($path);
     if (!in_array($mime,['image/jpeg','image/png','image/webp'],true) || !$info || ($info['mime']??'')!==$mime) throw new InvalidArgumentException('Choose a valid JPG, PNG or WebP photo.');

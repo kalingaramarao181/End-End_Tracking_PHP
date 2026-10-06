@@ -58,7 +58,7 @@ The fixture is disabled unless `E2E_COLLECTION_TEST_MODE=1`. After deployment, v
 - Attendance Management > Configurations (direct route `/dashboard/attendance/configurations`) configures the signed-in sender for pre-offers, public forms and payslips. Employee creators and payslip sharers can manage their own sender; any authorized mailbox-configuring user can enter a different sender email, provided its SMTP credentials verify successfully.
 - Super Admin with attendance edit permission can configure a separate organization-wide Leave Approval Mailbox and HR recipient. Existing environment/default settings remain the fallback until this mailbox is configured.
 - Saving either mailbox sends a verification email before persisting encrypted credentials. Failed verification preserves the prior configuration. These deployment checks did not send real mail.
-- Manual Add Employee and public submissions allocate `BDT-I-NNN` codes through a transactional singleton sequence. Manual entry has no employee-ID field; existing IDs remain visible and read-only during editing. The sequence checks the highest existing code and serializes concurrent creations, including when no employees exist.
+- Employee IDs are optional on creation. Public submissions leave the code NULL; authorized staff can enter a unique code manually once. Existing assigned IDs are immutable.
 - Apply `migrations/20261003_attendance_configurations.sql` before deploying the changed PHP files. It creates `employee_id_sequence` and `attendance_leave_mail_settings`; it was applied locally. Deploy `AttendanceLeaveMailService.php` along with the updated employee module and `UserSmtpCredentialService.php`.
 - Configurations has its own permission-aware route so authorized employee creators do not need payroll-sharing permission or attendance-view permission just to configure their sender.
 - Verify in staging: configure sender, send pre-offer from Employees, submit form, add employee manually, confirm sequential IDs, send payslip, configure leave mailbox and submit a leave request. Keep the existing encryption key unchanged.
@@ -71,7 +71,7 @@ The sequence column `last_value` is quoted with backticks in the migration and a
 
 ## October 5: BDT IDs, reusable links, and employee profiles
 
-Apply `migrations/20261005_employee_profile_editing.sql` before deploying the employee module updates. This adds allocator row 2 for BDT codes without changing any existing employee IDs. Both creation flows scan the highest numeric BDT-I suffix and allocate under a transaction lock: BDT-I-132 becomes BDT-I-133, and small numbers are padded to three digits. Existing EMP codes are preserved.
+Apply `migrations/20261006_manual_employee_ids.sql` before deploying the latest employee APIs. Earlier automatic allocation is superseded by optional one-time manual assignment. Existing employee IDs are preserved.
 
 Public links accept their first submission within seven days of invitation. After submission, the same token opens the saved employee record and remains editable for four days from the original completed_at. Edits do not allocate another ID, duplicate employees, or extend that deadline. The response includes edit_until with its timezone; the form displays it in the browser's local time. Public document downloads use the same token, record scope, and deadline. Once expired, HR must edit through the authenticated employee page.
 
@@ -94,3 +94,9 @@ No additional database migration is required for this profile redesign/document 
 
 Profile cards provide local Edit and Add controls for education, experience, certifications and references. Documents have their own upload editor, retaining the existing document locks. Missing required completion items appear in red. Personal, family and banking section saves validate their required fields. Section-scoped saves merge only the selected section with the current database record, preserving unrelated information. Attendance Insights loads its report when opened and can be collapsed. No additional migration is required; deploy the frontend build and updated employee model.php.
 
+
+## Employee ID assignment and profile fixes (2026-10-06)
+
+This replaces the earlier automatic allocator behavior. Run `migrations/20261006_manual_employee_ids.sql` BEFORE deploying the updated PHP employee APIs. Existing IDs, collation and unique indexes are preserved. Public submissions leave the ID NULL. Authorized employee create/edit staff may enter an ID manually once; assigned IDs cannot be cleared or replaced. Public/self-profile edits cannot assign IDs. Attendance login needs an assigned ID and still enforces company IP restrictions.
+
+Deploy modules/employee/model.php, payroll.php, controller.php, EmployeeCollectionService.php and EmployeePhotoService.php together with the rebuilt frontend. Permanent address and parent phone numbers are optional and excluded from completion warnings. Profile views show personal, contact and family information normally. Banking/statutory fields are masked as XXXXX.XXX......, with independent Show/Hide eye buttons. Edit fields retain original values. HR-created banking details persist encrypted. Photo limits follow PHP upload limits, capped at 2 MB. Keep EMPLOYEE_DOCUMENT_DIR writable and outside the web root, and retain the same encryption key on live. Python regression scripts are development checks, not deployment requirements.

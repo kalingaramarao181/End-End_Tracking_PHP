@@ -4,7 +4,7 @@
  * Documents are encrypted and stored outside the web root, served through authenticated routes.
  */
 function employeeExecute($statement): void {
-    if (!$statement->execute()) throw new RuntimeException('Employee database operation failed: '.$statement->error);
+    if (!$statement->execute()) throw new RuntimeException('Employee database operation failed: '.$statement->error,(int)$statement->errno);
 }
 function employeeArrayIsList(array $value): bool {
     return $value === [] || array_keys($value) === range(0,count($value)-1);

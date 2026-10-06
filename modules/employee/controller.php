@@ -135,7 +135,14 @@ function getEmployeeAttendance($id) {
     if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$start)||!preg_match('/^\d{4}-\d{2}-\d{2}$/',$end)||$start>$end){
         http_response_code(422);echo json_encode(['success'=>false,'message'=>'Valid start_date and end_date are required.']);return;
     }
-    echo json_encode(fetchAttendance($id,$start,$end,$_GET['page']??1,$_GET['limit']??20));
+    try{
+        employeeCollectionDate($start,'Start date',true);employeeCollectionDate($end,'End date',true);
+        $filters=['status'=>employeeCollectionText($_GET['status']??'all','Status',20),'month'=>employeeCollectionText($_GET['month']??'','Month',7),'search_date'=>employeeCollectionText($_GET['search_date']??'','Search date',10)];
+        if(!in_array($filters['status'],['all','on_time','late','half_day','working','completed'],true))throw new InvalidArgumentException('Choose a valid attendance status.');
+        if($filters['month']!=='')employeeCollectionDate($filters['month'].'-01','Month',true);
+        if($filters['search_date']!=='')employeeCollectionDate($filters['search_date'],'Search date',true);
+        echo json_encode(fetchAttendance($id,$start,$end,$_GET['page']??1,$_GET['limit']??20,$filters));
+    }catch(InvalidArgumentException $e){http_response_code(422);echo json_encode(['success'=>false,'message'=>$e->getMessage()]);}
 }
 
 function setEmployeeAttendanceDate($id, $date) {
@@ -187,6 +194,7 @@ function attendanceClock($user, $action) {
     $input=json_decode(file_get_contents('php://input'),true)?:[];
     $employee=fetchEmployeeForUser((int)$user['id']);
     if(!$employee){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Your login is not linked to an employee profile.']);return;}
+    if(trim((string)($employee['employee_id']??''))===''){http_response_code(422);echo json_encode(['success'=>false,'message'=>'HR must assign your employee ID before attendance login is available.']);return;}
     $confirmed=strtoupper(trim((string)($input['employee_id']??'')));
     if($confirmed!==strtoupper((string)$employee['employee_id'])){
         http_response_code(422);echo json_encode(['success'=>false,'message'=>'Employee ID does not match your profile.']);return;

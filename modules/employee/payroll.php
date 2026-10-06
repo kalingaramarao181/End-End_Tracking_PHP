@@ -25,7 +25,7 @@ function payrollRoster(){
  $s->bind_param('sss',$start,$end,$m);$s->execute();$out=[];$r=$s->get_result();while($x=$r->fetch_assoc()){if($x['payslip_id']){$x['payslip']=payrollDecode(['id'=>$x['payslip_id'],'status'=>$x['payslip_status'],'payroll_snapshot'=>$x['payroll_snapshot'],'payslip_number'=>$x['payslip_number'],'gross_earnings'=>$x['gross_earnings'],'total_deductions'=>$x['total_deductions'],'net_pay'=>$x['net_pay'],'generated_at'=>$x['generated_at'],'sent_at'=>$x['sent_at']]);}unset($x['payroll_snapshot'],$x['payslip_number'],$x['gross_earnings'],$x['total_deductions'],$x['net_pay'],$x['generated_at'],$x['sent_at']);$out[]=$x;}echo json_encode(['success'=>true,'data'=>$out]);
 }
 function payrollDraft($employeeId){
- global $conn;$m=payrollMonth();$start=new DateTimeImmutable($m.'-01');$end=$start->modify('last day of this month');$s=$conn->prepare("SELECT e.id,e.employee_id,TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) employee_name,p.position_name designation,e.payroll_email payroll_email,e.monthly_salary,e.address permanent_address,e.birthdate date_of_birth,e.gender,e.payroll_profile FROM employees e JOIN users u ON u.id=e.user_id LEFT JOIN positions p ON p.id=u.position_id WHERE e.id=?");$s->bind_param('i',$employeeId);$s->execute();$d=$s->get_result()->fetch_assoc();if(!$d){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Employee not found.']);return;}
+ global $conn;$m=payrollMonth();$start=new DateTimeImmutable($m.'-01');$end=$start->modify('last day of this month');$s=$conn->prepare("SELECT e.id,e.employee_id,TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) employee_name,p.position_name designation,e.payroll_email payroll_email,e.monthly_salary,e.date_of_joining,e.address permanent_address,e.birthdate date_of_birth,e.gender,e.payroll_profile FROM employees e JOIN users u ON u.id=e.user_id LEFT JOIN positions p ON p.id=u.position_id WHERE e.id=?");$s->bind_param('i',$employeeId);$s->execute();$d=$s->get_result()->fetch_assoc();if(!$d){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Employee not found.']);return;}
  $weekends=0;$working=0;for($day=$start;$day<=$end;$day=$day->modify('+1 day')){in_array((int)$day->format('N'),[6,7])?$weekends++:$working++;}
  $a=$conn->prepare("SELECT COUNT(DISTINCT date) present,SUM(work_status='half_day') halfs FROM attendance WHERE employee_id=? AND date BETWEEN ? AND ?");$a1=$start->format('Y-m-d');$a2=$end->format('Y-m-d');$a->bind_param('iss',$employeeId,$a1,$a2);$a->execute();$att=$a->get_result()->fetch_assoc();
  $h=$conn->prepare("SELECT COUNT(*) total FROM holidays WHERE holiday_date BETWEEN ? AND ? AND DAYOFWEEK(holiday_date) NOT IN(1,7)");$h->bind_param('ss',$a1,$a2);$h->execute();$hol=(float)$h->get_result()->fetch_assoc()['total'];
@@ -33,6 +33,7 @@ function payrollDraft($employeeId){
  $profile=payrollSecureData(json_decode($d['payroll_profile']??'',true)?:[],false);unset($d['payroll_profile']);$d=array_merge($d,$profile);$d['location']='Visakhapatnam';
  $salary=(float)($d['monthly_salary']??0);
  $defaults=['monthly_salary'=>$salary,'basic_salary'=>round($salary*.5,2),'hra'=>round($salary*.2,2),'special_allowance'=>round($salary*.3,2),'bonus'=>0,'overtime'=>0,'reimbursement'=>0,'other_earnings'=>0,'us_tax'=>200,'pf'=>0,'esi'=>0,'insurance'=>0,'loan_advance'=>0,'other_deductions'=>0,'professional_tax'=>0,'father_name'=>'','pan_number'=>'','uan_number'=>'','pf_account_number'=>'','esi_number'=>'','bank_name'=>'','bank_account_number'=>'','ifsc_code'=>'','date_of_joining'=>'','pay_mode'=>'Bank Transfer','department'=>'','location'=>'Visakhapatnam','leave_cl_opening'=>0,'leave_cl_available'=>0,'leave_cl_carried'=>0,'leave_cl_max'=>0,'leave_cl_encashed'=>0,'leave_cl_previous_used'=>0,'leave_pl_opening'=>0,'leave_pl_available'=>0,'leave_pl_carried'=>0,'leave_pl_max'=>0,'leave_pl_encashed'=>0,'leave_pl_previous_used'=>0,'comp_off_opening'=>0,'comp_off_available'=>0,'comp_off_carried'=>0,'comp_off_max'=>0,'comp_off_encashed'=>0,'comp_off_previous_used'=>0,'comp_off_availed'=>0,'employer_pf'=>0,'employer_esi'=>0,'pension_fund'=>0,'ctc_other'=>0,'notes'=>''];
+ foreach(['father_name','pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','date_of_joining','pay_mode','department','date_of_birth','gender','permanent_address'] as $key)if(array_key_exists($key,$d))$defaults[$key]=$d[$key];
  $previous=$conn->prepare("SELECT pay_month,payroll_snapshot FROM employee_payslips WHERE employee_id=? AND pay_month<? ORDER BY pay_month DESC,id DESC LIMIT 1");
  $previous->bind_param('is',$employeeId,$m);$previous->execute();$saved=$previous->get_result()->fetch_assoc();
  if($saved){$snapshot=json_decode($saved['payroll_snapshot'],true)?:[];foreach(['monthly_salary','basic_salary','hra','special_allowance','us_tax','pf','esi','insurance'] as $key){if(array_key_exists($key,$snapshot))$defaults[$key]=(float)$snapshot[$key];}$defaults['previous_pay_month']=$saved['pay_month'];}
@@ -130,7 +131,7 @@ function payrollSubmitOnboarding($token) {
         $in=employeeRequestData();
         foreach (['firstname','lastname','birthdate','gender','address','contact_info'] as $key) {
             $in[$key]=employeeCollectionText($in[$key] ?? '',$key,$key==='address'?5000:250);
-            if ($in[$key]==='') throw new InvalidArgumentException($key.' is required.');
+            if ($in[$key]==='' && $key!=='address') throw new InvalidArgumentException($key.' is required.');
         }
         $in['birthdate']=employeeCollectionDate($in['birthdate'],'Date of birth',true);
         $in['date_of_joining']=employeeCollectionDate($in['date_of_joining'] ?? '','Date of joining');
@@ -152,7 +153,7 @@ function payrollSubmitOnboarding($token) {
             if(!$record)throw new DomainException('This employee record is unavailable. Please contact HR.');
             $employeeCode=$record['employee_id'];$existingCollection=employeeDecodeCollection($record['candidate_collection']);
             $in['date_of_joining']=$record['date_of_joining']??'';
-        }else{$employeeCode=employeeNextCode();}
+        }else{$employeeCode=null;}
 
         $profile=$editing?(payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false)):[];
         foreach (['pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode','department'] as $key) $profile[$key]=employeeCollectionText($in[$key] ?? ($key==='pay_mode'?'Bank Transfer':''),$key,250);
