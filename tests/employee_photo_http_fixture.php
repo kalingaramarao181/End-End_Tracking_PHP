@@ -18,5 +18,9 @@ try {
  $large=employeeSavePhoto(7,$_FILES['large']);photoTest(!$large['success'],'Oversize photo accepted');
  photoTest(!employeePhotoNameIsValid('../../photo.enc'),'Unsafe storage path accepted');
  photoTest($conn->query('SELECT photo FROM employees WHERE id=7')->fetch_assoc()['photo']===$current,'Rejected upload altered existing portrait');
- http_response_code(200);echo json_encode(['passed'=>true,'checks'=>['multipart upload','encrypted storage','download roundtrip','replacement','old file cleanup','failed save cleanup','disguised file rejected','oversize file rejected','path validation','existing portrait preserved']]);
+ $configured=getenv('EMPLOYEE_DOCUMENT_DIR');
+ putenv('EMPLOYEE_DOCUMENT_DIR='.$file['tmp_name']);
+ try{$storageFailure=employeeSavePhoto(7,$file);photoTest(!$storageFailure['success']&&str_contains($storageFailure['message'],'EMPLOYEE_DOCUMENT_DIR'),'Storage failure was not actionable');photoTest(!str_contains($storageFailure['message'],$file['tmp_name']),'Internal file path leaked');}finally{putenv('EMPLOYEE_DOCUMENT_DIR='.$configured);}
+ photoTest($conn->query('SELECT photo FROM employees WHERE id=7')->fetch_assoc()['photo']===$current,'Storage failure changed existing portrait');
+ http_response_code(200);echo json_encode(['passed'=>true,'checks'=>['multipart upload','encrypted storage','download roundtrip','replacement','old file cleanup','failed save cleanup','disguised file rejected','oversize file rejected','path validation','existing portrait preserved','storage failure diagnostic','internal paths excluded']]);
 } catch(Throwable $error){http_response_code(500);echo json_encode(['passed'=>false,'message'=>$error->getMessage()]);}

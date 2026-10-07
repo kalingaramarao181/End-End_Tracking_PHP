@@ -314,7 +314,7 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
             if($section==='bank')foreach(['pan_number','bank_name','bank_account_number','ifsc_code'] as $field)if(trim((string)($data[$field]??''))==='')throw new InvalidArgumentException('Bank name, account number, IFSC and PAN are required.');
         }
         if($personalOnly){
-            $data=array_intersect_key($data,array_flip(['firstname','lastname','address','birthdate','contact_info','gender','collection','document_upload_count','pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']));
+            $data=array_intersect_key($data,array_flip(['firstname','lastname','address','birthdate','contact_info','gender','date_of_joining','collection','document_upload_count','pan_number','uan_number','pf_account_number','esi_number','bank_name','bank_account_number','ifsc_code','pay_mode']));
             if(isset($data['collection']) && is_array($data['collection'])){
                 $saved=employeeDecodeCollection($record['candidate_collection']);
                 $data['collection']['selected_role']=$saved['selected_role']??'';
@@ -333,7 +333,7 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
         $stmt=$conn->prepare('UPDATE employees SET employee_id=?,firstname=?,lastname=?,address=?,birthdate=?,contact_info=?,gender=?,position_id=?,schedule_id=?,photo=?,date_of_joining=? WHERE id=?');
         $joining=$data['date_of_joining']?:null;
         $stmt->bind_param('sssssssiissi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining,$id);employeeExecute($stmt);
-        employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths,false,$personalOnly);
+        employeeSaveCollection((int)$id,$data,employeeDecodeCollection($record['candidate_collection']),$createdPaths,false,false);
         $profile=payrollSecureData(json_decode($record['payroll_profile']??'[]',true)?:[],false);
         $profileChanged=true;
         $profile['date_of_joining']=$data['date_of_joining'];$profile['date_of_birth']=$data['birthdate'];$profile['gender']=$data['gender'];$profile['permanent_address']=$data['address'];

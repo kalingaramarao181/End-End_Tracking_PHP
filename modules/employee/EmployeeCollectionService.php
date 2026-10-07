@@ -132,14 +132,18 @@ function employeeNormalizeCollection(array $input, array $existing = [], bool $p
     return $out;
 }
 function employeeDocumentDirectory(): string {
-    $directory = getenv('EMPLOYEE_DOCUMENT_DIR') ?: dirname(__DIR__,4).DIRECTORY_SEPARATOR.'e2e_employee_documents';
-    if (is_file($directory)) throw new RuntimeException('Employee document storage is unavailable.');
-    if (!is_dir($directory) && !@mkdir($directory,0700,true) && !is_dir($directory)) throw new RuntimeException('Employee document storage is unavailable.');
-    $real = realpath($directory);
-    $webRoot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: realpath(dirname(__DIR__,3));
-    if ($webRoot && ($real === $webRoot || str_starts_with(strtolower($real),strtolower($webRoot).DIRECTORY_SEPARATOR))) {
-        throw new RuntimeException('Employee document storage must be outside the web root.');
-    }
+    $configured=trim((string)getenv('EMPLOYEE_DOCUMENT_DIR'));
+    $legacy=dirname(__DIR__,4).DIRECTORY_SEPARATOR.'e2e_employee_documents';
+    $webRoot=realpath($_SERVER['DOCUMENT_ROOT']??'')?:realpath(dirname(__DIR__,3));
+    // Keep existing private files at their original location. For a new hosting
+    // installation use the account directory beside the public document root.
+    $directory=$configured!==''?$configured:(file_exists($legacy)?$legacy:dirname($webRoot?:dirname(__DIR__,3)).DIRECTORY_SEPARATOR.'e2e_employee_documents');
+    if(is_file($directory))throw new RuntimeException('Employee document storage is not a directory.');
+    if(!is_dir($directory)&&!@mkdir($directory,0700,true)&&!is_dir($directory))throw new RuntimeException('Employee document storage could not be created.');
+    $real=realpath($directory);
+    if(!$real)throw new RuntimeException('Employee document storage could not be resolved.');
+    if($webRoot&&($real===$webRoot||str_starts_with(strtolower($real),strtolower($webRoot).DIRECTORY_SEPARATOR)))throw new RuntimeException('Employee document storage must be outside the web root.');
+    if(!is_writable($real))throw new RuntimeException('Employee document storage is not writable.');
     return $real;
 }
 function employeeReceiveDocuments(array &$collection, array &$createdPaths): void {

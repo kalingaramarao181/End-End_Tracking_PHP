@@ -10,25 +10,29 @@ function employeeValidatePhoto(array $file): array {
     $path=$file['tmp_name'] ?? '';
     $size=is_file($path)?filesize($path):0;
     if (!$size || $size>$max) throw new InvalidArgumentException('Choose an image up to '.$limit.' MB.');
-    $mime=(new finfo(FILEINFO_MIME_TYPE))->file($path);
     $info=@getimagesize($path);
+    $mime=class_exists('finfo')?(new finfo(FILEINFO_MIME_TYPE))->file($path):($info['mime']??'');
     if (!in_array($mime,['image/jpeg','image/png','image/webp'],true) || !$info || ($info['mime']??'')!==$mime) throw new InvalidArgumentException('Choose a valid JPG, PNG or WebP photo.');
     if ($info[0]<1 || $info[1]<1 || $info[0]>6000 || $info[1]>6000 || $info[0]*$info[1]>16000000) throw new InvalidArgumentException('Photo dimensions are too large. Choose an image up to 6000 pixels and 16 megapixels.');
     return ['path'=>$path,'mime'=>$mime];
 }
 function employeeSavePhoto(int $employeeId, array $file): array {
     global $conn;
-    $newPath='';$transaction=false;
+    $newPath='';$transaction=false;$stage='validation';
     try {
         $validated=employeeValidatePhoto($file);
         if (!is_uploaded_file($validated['path'])) throw new InvalidArgumentException('Invalid photo upload.');
         $bytes=file_get_contents($validated['path']);
         if ($bytes===false) throw new RuntimeException('Photo could not be read.');
         $name=bin2hex(random_bytes(16)).'.photo.enc';
+        $stage='storage';
         $newPath=employeeDocumentDirectory().DIRECTORY_SEPARATOR.$name;
+        $stage='encryption';
         $encrypted=payrollEncryptValue($bytes);
-        if (file_put_contents($newPath,$encrypted,LOCK_EX)!==strlen($encrypted)) throw new RuntimeException('Photo could not be stored.');
+        $stage='storage';
+        if (@file_put_contents($newPath,$encrypted,LOCK_EX)!==strlen($encrypted)) throw new RuntimeException('Photo could not be stored.');
         @chmod($newPath,0600);
+        $stage='database';
         $conn->begin_transaction();$transaction=true;
         $select=$conn->prepare('SELECT photo FROM employees WHERE id=? FOR UPDATE');$select->bind_param('i',$employeeId);employeeExecute($select);$row=$select->get_result()->fetch_assoc();
         if (!$row) throw new InvalidArgumentException('Employee not found.');
@@ -38,10 +42,15 @@ function employeeSavePhoto(int $employeeId, array $file): array {
         if(employeePhotoNameIsValid($old)) @unlink(employeeDocumentDirectory().DIRECTORY_SEPARATOR.$old);
         return ['success'=>true,'message'=>'Profile photo updated.','photo'=>$name];
     } catch(Throwable $error) {
-        if($transaction)$conn->rollback();
+        if($transaction){try{$conn->rollback();}catch(Throwable $rollbackError){error_log('Employee photo rollback failed: '.$rollbackError->getMessage());}}
         if($newPath && is_file($newPath))@unlink($newPath);
-        if(!($error instanceof InvalidArgumentException))error_log('Employee photo: '.$error->getMessage());
-        return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Photo could not be saved. Please try again.'];
+        if(!($error instanceof InvalidArgumentException))error_log('Employee photo ['.$stage.']: '.$error->getMessage());
+        $messages=[
+            'storage'=>'Photo storage is unavailable. Ask the server administrator to configure EMPLOYEE_DOCUMENT_DIR as a writable private folder outside the website root.',
+            'encryption'=>'Photo encryption is unavailable. Ask the server administrator to verify the existing MAIL_CREDENTIAL_KEY configuration.',
+            'database'=>'Photo could not be saved in the employee record. Ask the server administrator to check the employee photo column and database error log.',
+        ];
+        return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():($messages[$stage]??'Photo could not be processed. Ask the server administrator to check the PHP error log.')];
     }
 }
 function employeeReadPhoto(int $employeeId): void {

@@ -36,6 +36,7 @@ $status=http_response_code() ?: 200;
 $employeeCount=(int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n'];
 $completed=$conn->query('SELECT completed_at FROM employee_onboarding_invites')->fetch_assoc()['completed_at'];
 try {
+    $originalUploads=$_FILES;
     if (!in_array($mode,['success','no_files','no_experience'],true)) {
         testCheck(!$response['success'],'Expected submission rejection');
         testCheck($employeeCount===0 && $completed===null,'Rejected submission left employee or consumed invite');
@@ -135,14 +136,14 @@ try {
     $duplicate=updateEmployeeRecord($unassigned['id'],['employee_id'=>'BDT-I-133']);testCheck(!$duplicate['success'],'Duplicate employee ID accepted');
     $personal=updateEmployeeRecord($id,['firstname'=>'Updated','employee_id'=>'FORGED','position_id'=>99,'schedule_id'=>99,'date_of_joining'=>'2020-01-01','monthly_salary'=>999999,'collection'=>array_merge($saved,['selected_role'=>'hr','review'=>['reviewed_by'=>'Forged','date'=>'2026-10-01']])],true);
     testCheck($personal['success'],'Owner edit failed');$ownerAfter=$conn->query('SELECT * FROM employees WHERE id='.(int)$id)->fetch_assoc();
-    testCheck($ownerAfter['firstname']==='Updated' && $ownerAfter['employee_id']==='BDT-I-133' && $ownerAfter['position_id']===null && $ownerAfter['schedule_id']===null && $ownerAfter['date_of_joining']==='2026-10-01','Personal edit changed protected fields');
+    testCheck($ownerAfter['firstname']==='Updated' && $ownerAfter['employee_id']==='BDT-I-133' && $ownerAfter['position_id']===null && $ownerAfter['schedule_id']===null && $ownerAfter['date_of_joining']==='2020-01-01','Personal edit changed protected fields');
     testCheck($ownerAfter['monthly_salary']===$record['monthly_salary'],'Personal edit changed salary');
     $ownerCollection=employeeDecodeCollection($ownerAfter['candidate_collection']);testCheck($ownerCollection['selected_role']==='web_developer' && $ownerCollection['review']['reviewed_by']==='HR Reviewer','Personal edit forged role or review');
     if(!empty($ownerCollection['documents'])){
-        $doc=$ownerCollection['documents'][0];$_FILES=['documents'=>['error'=>[$doc['category']=>[UPLOAD_ERR_OK]]]];
-        $blocked=updateEmployeeRecord($id,['collection'=>$ownerCollection],true);testCheck(!$blocked['success'] && str_contains($blocked['message'],'already uploaded'),'Self edit replaced a locked document');$_FILES=[];
-        $detached=$ownerCollection;$detached['education']=[];
-        $blocked=updateEmployeeRecord($id,['collection'=>$detached],true);testCheck(!$blocked['success'],'Self edit removed an entry with a locked document');
+        $oldDocumentIds=array_column($ownerCollection['documents'],'id');$_FILES=$originalUploads;
+        $replacement=updateEmployeeRecord($id,['edit_section'=>'documents','collection'=>$ownerCollection],true);$_FILES=[];
+        testCheck($replacement['success'],'Owner document replacement failed: '.json_encode($replacement));
+        $ownerCollection=fetchEmployeeById($id)['collection'];testCheck(count(array_diff(array_column($ownerCollection['documents'],'id'),$oldDocumentIds))>0,'Owner corrected document upload was not saved');
     }
     $sectionEdit=updateEmployeeRecord($id,['edit_section'=>'education','firstname'=>'Should not change','bank_name'=>'Should not change','collection'=>array_merge($ownerCollection,['father_name'=>'Should not change'])],true);
     testCheck($sectionEdit['success'],'Education section save failed');$sectionAfter=fetchEmployeeById($id);testCheck($sectionAfter['firstname']==='Updated' && $sectionAfter['collection']['father_name']===$ownerCollection['father_name'],'Section save overwrote unrelated profile details');
