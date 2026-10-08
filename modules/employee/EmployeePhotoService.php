@@ -69,3 +69,17 @@ function employeeReadPhoto(int $employeeId): void {
         echo $bytes;
     } catch(Throwable $error){http_response_code(404);echo json_encode(['success'=>false,'message'=>'Profile photo not found.']);}
 }
+
+function employeeRemovePhoto(int $employeeId): array {
+ global $conn;$transaction=false;
+ try{
+  $conn->begin_transaction();$transaction=true;
+  $stmt=$conn->prepare('SELECT photo FROM employees WHERE id=? FOR UPDATE');$stmt->bind_param('i',$employeeId);employeeExecute($stmt);$row=$stmt->get_result()->fetch_assoc();
+  if(!$row)throw new InvalidArgumentException('Employee not found.');
+  $old=(string)($row['photo']??'');$path=employeePhotoNameIsValid($old)?employeeDocumentDirectory().DIRECTORY_SEPARATOR.$old:'';
+  $stmt=$conn->prepare("UPDATE employees SET photo='' WHERE id=?");$stmt->bind_param('i',$employeeId);employeeExecute($stmt);
+  $conn->commit();$transaction=false;
+  if($path&&is_file($path)&&!@unlink($path))error_log('Employee photo cleanup failed after removal for employee '.$employeeId);
+  return ['success'=>true,'message'=>'Profile photo removed.'];
+ }catch(Throwable $error){if($transaction)$conn->rollback();error_log('Employee photo removal: '.$error->getMessage());return ['success'=>false,'message'=>$error instanceof InvalidArgumentException?$error->getMessage():'Photo could not be removed. Please retry or contact the server administrator.'];}
+}

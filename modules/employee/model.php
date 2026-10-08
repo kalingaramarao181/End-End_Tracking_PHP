@@ -36,21 +36,25 @@ function fetchEmployees($filters) {
         $params[] = (int)$filters['position_id'];
         $types .= 'i';
     }
+    foreach(['company'=>'u.nick_name','role'=>'p.position_name','joining_date'=>'e.date_of_joining'] as $key=>$column){if(!empty($filters[$key])){$conditions[]=$column.'=?';$params[]=trim((string)$filters[$key]);$types.='s';}}
+    if(($filters['status']??'')==='active')$conditions[]="e.user_id IS NOT NULL AND LOWER(COALESCE(u.status,''))='active'";
+    elseif(($filters['status']??'')==='inactive')$conditions[]="e.user_id IS NOT NULL AND LOWER(COALESCE(u.status,''))<>'active'";
+    elseif(($filters['status']??'')==='unassigned')$conditions[]='e.user_id IS NULL';
     $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
     $countStmt = $conn->prepare("SELECT COUNT(*) AS total FROM employees e
-        LEFT JOIN users u ON u.id = e.user_id $where");
+        LEFT JOIN users u ON u.id = e.user_id LEFT JOIN positions p ON p.id=COALESCE(u.position_id,e.position_id) $where");
     if ($params) $countStmt->bind_param($types, ...$params);
     $countStmt->execute();
     $total = (int)$countStmt->get_result()->fetch_assoc()['total'];
 
     $stmt = $conn->prepare("SELECT e.id, e.employee_id, e.firstname, e.lastname,
             TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) AS legal_name,
-            e.contact_info, e.gender, e.birthdate, e.payroll_email, e.candidate_collection, e.payroll_profile, e.position_id, e.photo, e.created_on,
+            e.contact_info, e.gender, e.birthdate, e.payroll_email, e.candidate_collection, e.payroll_profile, e.date_of_joining, e.position_id, e.photo, e.created_on,
             e.user_id, u.nick_name AS company_name, u.email AS username,
             u.status AS user_status, p.position_name AS role
         FROM employees e
         LEFT JOIN users u ON u.id = e.user_id
-        LEFT JOIN positions p ON p.id = u.position_id
+        LEFT JOIN positions p ON p.id = COALESCE(u.position_id,e.position_id)
         $where
         ORDER BY (e.user_id IS NULL) ASC, e.id DESC
         LIMIT ? OFFSET ?");
@@ -66,12 +70,23 @@ function fetchEmployees($filters) {
         unset($row['candidate_collection'],$row['payroll_profile'],$row['payroll_email']);
         $rows[]=$row;
     }
-    return ['data' => $rows, 'total' => $total];
+    $stats=$conn->query("SELECT COUNT(*) total,
+        SUM(e.user_id IS NOT NULL AND LOWER(COALESCE(u.status,''))='active') active,
+        SUM(e.user_id IS NULL OR LOWER(COALESCE(u.status,''))<>'active') inactive,
+        SUM(LOWER(COALESCE(p.position_name,'')) LIKE '%recruiter%') recruiters,
+        SUM(LOWER(COALESCE(p.position_name,'')) LIKE '%bench%') bench_sales
+        FROM employees e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN positions p ON p.id=COALESCE(u.position_id,e.position_id)")->fetch_assoc();
+    $stats=array_map('intval',$stats);$stats['other_roles']=max(0,$stats['total']-$stats['recruiters']-$stats['bench_sales']);
+    $options=['companies'=>[],'roles'=>[]];
+    foreach($conn->query("SELECT DISTINCT u.nick_name company,p.position_name role FROM employees e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN positions p ON p.id=COALESCE(u.position_id,e.position_id)") as $option){if(trim((string)$option['company'])!=='')$options['companies'][]=$option['company'];if(trim((string)$option['role'])!=='')$options['roles'][]=$option['role'];}
+    foreach($options as &$values){$values=array_values(array_unique($values));sort($values,SORT_NATURAL|SORT_FLAG_CASE);}unset($values);
+    return ['data' => $rows, 'total' => $total,'summary'=>$stats,'options'=>$options];
 }
 
 function fetchAttendanceRoster($date = null) {
     global $conn;
     $date = $date ?: newYorkNow()->format('Y-m-d');
+    $settings=attendanceSettings();
     $sql = "SELECT e.id,e.employee_id,e.user_id,
             TRIM(CONCAT_WS(' ',e.firstname,e.lastname)) legal_name,
             u.nick_name company_name,u.email username,p.position_name role,
@@ -89,6 +104,7 @@ function fetchAttendanceRoster($date = null) {
     $rows=[];$present=0;$late=0;$working=0;
     $result=$stmt->get_result();
     while($row=$result->fetch_assoc()){
+        $row['shift_start']=$settings['work_start']??null;$row['shift_end']=$settings['work_end']??null;
         $row['id']=(int)$row['id'];$row['present']=$row['attendance_id']!==null;
         $row['hours']=(float)($row['hours']??0);
         if($row['present']){$present++;if((int)$row['status']===0)$late++;if($row['time_out']==='00:00:00')$working++;}
@@ -301,7 +317,7 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
         $existing=fetchEmployeeById($id);
         if(isset($data['edit_section'])){
             $section=(string)$data['edit_section'];
-            $sections=['personal'=>['email'],'family'=>['father_name','father_phone','mother_name','mother_phone','siblings'],'education'=>['education'],'experience'=>['has_experience','employment'],'certifications'=>['certifications','achievements','professional_certifications'],'references'=>['references'],'documents'=>[],'bank'=>[]];
+            $sections=['personal'=>['email','current_address','linkedin_profile'],'family'=>['father_name','father_phone','mother_name','mother_phone','siblings'],'education'=>['education'],'experience'=>['has_experience','employment'],'certifications'=>['certifications','achievements','professional_certifications'],'references'=>['references'],'documents'=>[],'bank'=>[]];
             if(!array_key_exists($section,$sections))throw new InvalidArgumentException('Invalid profile section.');
             $saved=employeeDecodeCollection($record['candidate_collection']);
             $patch=$data['collection']??[];if(!is_array($patch))throw new InvalidArgumentException('Invalid profile information.');
@@ -656,6 +672,29 @@ function reviewLeaveByEmailToken($token,$status,$reviewerName) {
     $stmt->bind_param('ssss',$status,$reviewerName,$source,$hash);$stmt->execute();
     return $stmt->affected_rows?['success'=>true,'message'=>'Leave request '.$status.' successfully.']:['success'=>false,'message'=>'This approval link has expired or was already used.'];
 }
+function adminLogoutAttendance($id,$data,$userId) {
+    global $conn;
+    $dayType=$data['day_type']??'';
+    if(!in_array($dayType,['full_day','half_day'],true))return ['success'=>false,'message'=>'Choose Full Day or Half Day.'];
+    $conn->begin_transaction();
+    try {
+        $stmt=$conn->prepare('SELECT * FROM attendance WHERE id=? FOR UPDATE');$stmt->bind_param('i',$id);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();
+        if(!$row)throw new InvalidArgumentException('Attendance record not found.');
+        if($row['time_out']!=='00:00:00')throw new InvalidArgumentException('This employee has already logged out. Refresh attendance.');
+        $zone=new DateTimeZone('America/New_York');$in=new DateTimeImmutable($row['date'].' '.$row['time_in'],$zone);$out=$in->modify($dayType==='full_day'?'+6 hours':'+4 hours');
+        if($out->format('Y-m-d')!==$row['date'])throw new InvalidArgumentException('The selected day cannot fit after this login on the same date. Choose another day type or correct the attendance record.');
+        $seconds=$out->getTimestamp()-$in->getTimestamp();
+        if($seconds<=0)throw new InvalidArgumentException('Logout must be after login on the same attendance date.');
+        if($dayType==='full_day'&&$seconds<21600)throw new InvalidArgumentException('Full Day requires at least 6 hours on the same date.');
+        if($dayType==='half_day'&&$seconds>=18000)throw new InvalidArgumentException('Half Day requires less than 5 hours on the same date.');
+        $hours=$dayType==='half_day'?floor($seconds/36)/100:round($seconds/3600,2);$workStatus=$dayType==='full_day'?'completed':'half_day';$time=$out->format('H:i:s');$utc=$out->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        $notes=trim(($row['notes']??'')."\nAdmin logout: ".($dayType==='full_day'?'Full Day':'Half Day'));
+        $stmt=$conn->prepare("UPDATE attendance SET time_out=?,num_hr=?,work_status=?,notes=?,source='admin',updated_by=?,clock_out_utc=? WHERE id=? AND time_out='00:00:00'");
+        $stmt->bind_param('sdssisi',$time,$hours,$workStatus,$notes,$userId,$utc,$id);$stmt->execute();$conn->commit();
+        return ['success'=>true,'message'=>'Employee logged out successfully.','hours'=>$hours,'work_status'=>$workStatus,'time_out'=>$time];
+    }catch(Throwable $e){$conn->rollback();if($e instanceof InvalidArgumentException)return ['success'=>false,'message'=>$e->getMessage()];error_log('Admin attendance logout: '.$e->getMessage());return ['success'=>false,'message'=>'Employee logout could not be saved. Please try again.'];}
+}
+
 function adminEditAttendance($id,$data,$userId) {
     global $conn;$timeIn=$data['time_in']??'';$timeOut=$data['time_out']??'';$notes=trim((string)($data['notes']??''));
     if(!preg_match('/^\d{2}:\d{2}(:\d{2})?$/',$timeIn)||!preg_match('/^\d{2}:\d{2}(:\d{2})?$/',$timeOut)||$timeOut<=$timeIn)

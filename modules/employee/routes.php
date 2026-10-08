@@ -128,6 +128,11 @@ if ($method === 'PUT' && preg_match('#^attendance/leaves/(\d+)$#', $path, $match
     if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
     reviewLeave((int)$matches[1], $user); exit;
 }
+if ($method === 'POST' && preg_match('#^attendance/records/(\d+)/logout$#', $path, $matches)) {
+    requirePermission('attendance','can_edit');
+    if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
+    logoutAttendanceRecord((int)$matches[1], $user); exit;
+}
 if ($method === 'PUT' && preg_match('#^attendance/records/(\d+)$#', $path, $matches)) {
     requirePermission('attendance','can_edit');
     if (($attendancePermission['data_scope'] ?? 'OWN') !== 'ALL') employeeAdminDenied();
@@ -152,12 +157,13 @@ if ($method === 'PUT' && preg_match('#^employees/(\d+)/attendance/(\d{4}-\d{2}-\
     setEmployeeAttendanceDate((int)$matches[1], $matches[2]);
     exit;
 }
-if (in_array($method,['GET','POST'],true) && preg_match('#^employees/(\d+)/photo$#',$path,$matches)) {
-    $employeeId=(int)$matches[1];$own=fetchEmployeeForUser((int)$user['id']);
+if (in_array($method,['GET','POST','DELETE'],true) && preg_match('#^employees/(\d+)/photo$#',$path,$matches)) {
+    $employeeId=(int)$matches[1];$owner=$conn->prepare('SELECT id FROM employees WHERE user_id=? LIMIT 1');$ownerId=(int)$user['id'];$owner->bind_param('i',$ownerId);employeeExecute($owner);$own=$owner->get_result()->fetch_assoc();
     if($own && (int)$own['id']===$employeeId){requirePermission('profile','can_view');}
     else {requirePermission('employees',$method==='GET'?'can_view':'can_edit');if(!$isAdmin)employeeAdminDenied();}
     require_once __DIR__.'/EmployeePhotoService.php';
     if($method==='GET'){employeeReadPhoto($employeeId);exit;}
+    if($method==='DELETE'){$result=employeeRemovePhoto($employeeId);http_response_code($result['success']?200:422);echo json_encode($result);exit;}
     $result=employeeSavePhoto($employeeId,$_FILES['photo']??[]);http_response_code($result['success']?200:422);echo json_encode($result);exit;
 }
 if ($method === 'GET' && preg_match('#^employees/(\d+)/documents/([a-f0-9]{32})$#',$path,$matches)) {

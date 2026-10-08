@@ -61,8 +61,12 @@ function getEmployees($user) {
         "search"      => $_GET['search'] ?? null,
         "position_id" => $_GET['position_id'] ?? null,
         "employment"  => $_GET['employment'] ?? 'current',
-        "page"        => $_GET['page'] ?? 1,
-        "limit"       => $_GET['limit'] ?? 10
+        "company" => $_GET['company'] ?? null,
+        "role" => $_GET['role'] ?? null,
+        "status" => $_GET['status'] ?? null,
+        "joining_date" => $_GET['joining_date'] ?? null,
+        "page"        => max(1,(int)($_GET['page'] ?? 1)),
+        "limit"       => min(100,max(1,(int)($_GET['limit'] ?? 10)))
     ];
 
     $filters['offset'] = ($filters['page'] - 1) * $filters['limit'];
@@ -75,6 +79,8 @@ function getEmployees($user) {
         "limit" => $filters['limit'],
         "total" => $result['total'],
         "total_pages" => (int)ceil($result['total'] / max(1, $filters['limit'])),
+        "summary" => $result['summary'],
+        "options" => $result['options'],
         "data" => $result['data']
     ]);
 }
@@ -274,6 +280,10 @@ function createEmployeeLeaveByAdmin($user) {
 }
 function reviewLeave($id,$user) {
     $result=updateLeaveStatus($id,json_decode(file_get_contents('php://input'),true)?:[],(int)$user['id']);
+    http_response_code($result['success']?200:422);echo json_encode($result);
+}
+function logoutAttendanceRecord($id,$user) {
+    $result=adminLogoutAttendance($id,json_decode(file_get_contents('php://input'),true)?:[],(int)$user['id']);
     http_response_code($result['success']?200:422);echo json_encode($result);
 }
 function editAttendanceRecord($id,$user) {

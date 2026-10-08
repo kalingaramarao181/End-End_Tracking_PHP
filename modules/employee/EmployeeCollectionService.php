@@ -81,7 +81,7 @@ function employeeUpgradeCollection(array $value): array {
 function employeeNormalizeCollection(array $input, array $existing = [], bool $public = false): array {
     $input=employeeUpgradeCollection($input);$existing=employeeUpgradeCollection($existing);
     $out=['schema_version'=>2];
-    foreach (['email','facebook_profile','current_address','father_name','father_phone','mother_name','mother_phone','education_notes','professional_certifications','achievements','selected_role'] as $key) {
+    foreach (['email','facebook_profile','linkedin_profile','current_address','father_name','father_phone','mother_name','mother_phone','education_notes','professional_certifications','achievements','selected_role'] as $key) {
         $out[$key]=employeeCollectionText($input[$key] ?? $existing[$key] ?? '',$key,in_array($key,['current_address','education_notes','professional_certifications','achievements']) ? 5000 : 500);
     }
     if ($out['email']!=='' && !filter_var($out['email'],FILTER_VALIDATE_EMAIL)) throw new InvalidArgumentException('A valid email address is required.');

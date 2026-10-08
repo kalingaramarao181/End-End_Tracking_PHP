@@ -147,6 +147,13 @@ try {
     }
     $sectionEdit=updateEmployeeRecord($id,['edit_section'=>'education','firstname'=>'Should not change','bank_name'=>'Should not change','collection'=>array_merge($ownerCollection,['father_name'=>'Should not change'])],true);
     testCheck($sectionEdit['success'],'Education section save failed');$sectionAfter=fetchEmployeeById($id);testCheck($sectionAfter['firstname']==='Updated' && $sectionAfter['collection']['father_name']===$ownerCollection['father_name'],'Section save overwrote unrelated profile details');
+    foreach([false,true] as $self){
+        $before=fetchEmployeeById($id);$address=$self?'Owner current address, Visakhapatnam':'HR updated current address';$linkedin='https://www.linkedin.com/in/'.($self?'employee':'staff-update');
+        $update=updateEmployeeRecord($id,['edit_section'=>'personal','collection'=>['email'=>$before['collection']['email'],'current_address'=>$address,'linkedin_profile'=>$linkedin]],$self);
+        testCheck($update['success'],'Personal address/LinkedIn save failed: '.json_encode($update));$after=fetchEmployeeById($id);
+        testCheck($after['collection']['current_address']===$address && $after['collection']['linkedin_profile']===$linkedin,'Personal address/LinkedIn did not persist after reload');
+        testCheck($after['collection']['father_name']===$before['collection']['father_name'],'Personal save overwrote family data');
+    }
     testCheck(!$admin['collection']['declaration']['accepted'],'Admin forged candidate declaration');
     testCheck((int)$conn->query('SELECT COUNT(*) n FROM employees')->fetch_assoc()['n']===3,'Admin create did not persist');
     http_response_code(200);
