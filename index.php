@@ -4,28 +4,6 @@ ini_set('display_startup_errors', '0');
 ini_set('log_errors', '1');
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 
-$allowedOrigins = [
-    "https://e2e.bedatatech.com",
-    "https://e2e.beedatatech.com",
-    "http://localhost:3001",
-    "http://localhost:3000"
-
-    ];
-
-if (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], $allowedOrigins)) {
-    header("Access-Control-Allow-Origin: " . $_SERVER['HTTP_ORIGIN']);
-}
-
-header('Content-Type: application/json');
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
-header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
-header("Access-Control-Allow-Credentials: true");
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-
 /*
 |--------------------------------------------------------------------------
 | Get Request Path
@@ -59,6 +37,34 @@ if ($request === '' || $request === false) {
 // Provide both in their normalized, deployment-independent form.
 $_SERVER['REQUEST_URI'] = $request;
 $_GET['route'] = trim($request, '/');
+
+// Public employee access has its own policy and must precede global CORS/OPTIONS.
+if (preg_match('#^/public/employees(?:/|$)#', $request)) {
+    require_once __DIR__.'/modules/public_employees/routes.php';
+    exit;
+}
+
+$allowedOrigins = [
+    "https://e2e.bedatatech.com",
+    "https://e2e.beedatatech.com",
+    "http://localhost:3001",
+    "http://localhost:3000"
+
+    ];
+
+if (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], $allowedOrigins)) {
+    header("Access-Control-Allow-Origin: " . $_SERVER['HTTP_ORIGIN']);
+}
+
+header('Content-Type: application/json');
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
+header("Access-Control-Allow-Credentials: true");
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
 
 /*
 |--------------------------------------------------------------------------

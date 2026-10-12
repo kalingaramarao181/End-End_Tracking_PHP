@@ -1,0 +1,9 @@
+{
+  "published_at_utc": "2026-10-09T20:54:58.153756+00:00",
+  "backup_directory": "C:\\xampp\\htdocs\\E2E_Tracking\\website-updates\\beedatatech\\backups\\20261009T205438Z",
+  "files": {
+    "UpdatedFiles/employee-directory.css": "9659ff992837eb7432f31dd682f0f8b9a55e048f38eef6a9611cc7b1f33b61a3",
+    "UpdatedFiles/employee-directory.js": "1faa0dddca91f9d164dfa3d8aa236e864919dd96b35f9532ca8baeda7bd44fc7",
+    "employees.html": "49627d58f134f55a98bda4f160265121bb9452a87bbd26e5f5199c953e3f1eee"
+  }
+}

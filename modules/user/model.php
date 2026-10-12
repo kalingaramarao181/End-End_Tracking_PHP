@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../employee/EmployeeEmploymentService.php';
 
 class UserModel
 {
@@ -427,28 +428,18 @@ class UserModel
 
     $user = $result->fetch_assoc();
 
-    // Delete user
-    $stmt = $this->conn->prepare("
-        DELETE FROM users
-        WHERE id = ?
-    ");
-
-    if (!$stmt) {
-        return [
-            'success' => false,
-            'message' => 'Prepare failed.',
-            'error' => $this->conn->error
-        ];
-    }
-
-    $stmt->bind_param("i", $id);
-
-    if (!$stmt->execute()) {
-        return [
-            'success' => false,
-            'message' => 'Failed to delete user.',
-            'error' => $stmt->error
-        ];
+    // Record departure and delete atomically; failed deletion must not change employment.
+    $this->conn->begin_transaction();
+    try {
+        employeeRecordUserDeparture($this->conn,(int)$id);
+        $stmt=$this->conn->prepare('DELETE FROM users WHERE id=?');
+        $stmt->bind_param('i',$id);
+        if (!$stmt->execute()) throw new RuntimeException('Unable to delete user.');
+        $this->conn->commit();
+    } catch (Throwable $error) {
+        $this->conn->rollback();
+        error_log('User deletion: '.$error->getMessage());
+        return ['success'=>false,'message'=>'Failed to delete user.'];
     }
 
     return [

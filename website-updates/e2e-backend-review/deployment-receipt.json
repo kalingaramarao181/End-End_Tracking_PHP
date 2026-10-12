@@ -1,0 +1,19 @@
+{
+  "host": "access869825273.webspace-data.io",
+  "published_at_utc": "2026-10-09T20:07:47.210081+00:00",
+  "backup_directory": "C:\\xampp\\htdocs\\E2E_Tracking\\website-updates\\e2e-backend-review\\backups\\20261009T200739Z",
+  "leaving_date_column_verified": true,
+  "required_columns_verified": true,
+  "temporary_schema_probe_removed": true,
+  "index_sha256": "15cc8e18342c463f542c96ac944342162a35024498475a09c4db75c695ddba0e",
+  "live_verification": {
+    "api_get_status": 200,
+    "approved_origins_passed": true,
+    "unapproved_origins_rejected": true,
+    "preflight_methods_filters_passed": true,
+    "existing_authentication_preserved": true,
+    "website_loads_employee_data": true,
+    "desktop_mobile_passed": true,
+    "uncaught_javascript_errors": 0
+  }
+}

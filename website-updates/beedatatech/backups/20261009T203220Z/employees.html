@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Meet the people behind BeeData. Explore our employee directory, teams and experience.">
+  <meta name="beedata-employees-api" content="https://e2e.beedatatech.com/public/employees">
+  <title>Our People | BeeData Technology</title>
+  <link rel="icon" href="/home_images/favicon.png">
+  <link rel="stylesheet" href="/UpdatedFiles/employee-directory.css?v=20261010">
+  <script defer src="/UpdatedFiles/employee-api.js?v=20261010"></script>
+  <script defer src="/UpdatedFiles/employee-directory.js?v=20261010"></script>
+</head>
+<body>
+  <a class="skip-link" href="#directory">Skip to employee directory</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="BeeData Technology home"><img src="/home_images/beedata_logo.png" alt="BeeData Technology" width="166" height="56"></a>
+      <nav aria-label="Main navigation"><a href="/">Home</a><a href="/employees.html" aria-current="page">Our people</a><a class="contact-link" href="mailto:hrteam@beedatatech.com">Get in touch <span aria-hidden="true">↗</span></a></nav>
+    </div>
+  </header>
+  <main>
+    <section class="hero" aria-labelledby="page-title">
+      <div class="hero-inner">
+        <div class="hero-copy"><p class="eyebrow"><span aria-hidden="true"></span> THE BEEDATA TEAM</p><h1 id="page-title">The people behind<br>our <em>progress.</em></h1><p class="hero-description">Different talents. A shared ambition.<br>Meet the people building what's next at BeeData.</p><a class="hero-link" href="#directory">Explore our team <span aria-hidden="true">↓</span></a></div>
+        <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-center">B<span>PEOPLE. IDEAS. IMPACT.</span></div><div class="art-label art-label-one"><span class="art-dot"></span> Built on collaboration</div><div class="art-label art-label-two"><span class="art-spark">✦</span> Driven by people</div></div>
+      </div>
+    </section>
+    <section class="directory-shell" id="directory" aria-labelledby="directory-title">
+      <div class="metrics" aria-label="Employee totals">
+        <button class="metric active" data-status="all" aria-pressed="true"><span class="metric-icon" aria-hidden="true">◎</span><span class="metric-label">Total employees</span><strong id="totalCount">—</strong><span class="metric-note">The whole BeeData team <span aria-hidden="true">↗</span></span></button>
+        <button class="metric" data-status="working" aria-pressed="false"><span class="metric-icon green" aria-hidden="true">↗</span><span class="metric-label">Currently working</span><strong id="workingCount">—</strong><span class="metric-note">Building our next chapter <span aria-hidden="true">↗</span></span></button>
+        <button class="metric" data-status="not_working" aria-pressed="false"><span class="metric-icon amber" aria-hidden="true">◷</span><span class="metric-label">Former &amp; unlinked</span><strong id="formerCount">—</strong><span class="metric-note">Part of our story <span aria-hidden="true">↗</span></span></button>
+      </div>
+      <div class="section-heading"><div><p class="eyebrow dark">OUR PEOPLE</p><h2 id="directory-title">Meet the team</h2><p>Find a familiar face. Discover the talent behind the work.</p></div><button class="refresh-button" id="refreshButton" type="button"><span aria-hidden="true">↻</span> Refresh</button></div>
+      <div class="toolbar">
+        <div class="search-wrap"><label for="employeeSearch" class="visually-hidden">Search by employee name, ID or role</label><span aria-hidden="true">⌕</span><input type="search" id="employeeSearch" placeholder="Search name, employee ID or role…" autocomplete="off" disabled></div>
+        <div class="select-wrap"><label for="roleFilter">Role</label><select id="roleFilter" disabled><option value="all">All roles</option></select></div>
+        <div class="select-wrap"><label for="sortOrder">Sort by</label><select id="sortOrder" disabled><option value="name">Name A–Z</option><option value="name_desc">Name Z–A</option><option value="newest">Newest joining date</option><option value="longest">Longest tenure</option></select></div>
+      </div>
+      <div class="filter-row"><div class="status-tabs" role="group" aria-label="Filter employment status"><button data-status="all" aria-pressed="true" class="active">Everyone</button><button data-status="working" aria-pressed="false">Working</button><button data-status="not_working" aria-pressed="false">Former &amp; unlinked</button></div><p id="resultCount" role="status" aria-live="polite">Loading the team…</p></div>
+      <div id="feedback" class="feedback loading" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><h3>Getting to know the team…</h3><p>We're bringing the latest employee information together.</p></div>
+      <div class="employee-grid" id="employeeGrid" aria-label="Employees" aria-busy="true"></div>
+      <div class="pagination"><button id="loadMoreButton" class="load-more" hidden>Show more employees <span aria-hidden="true">↓</span></button><p id="pageNote"></p></div>
+      <p class="data-note" id="dataNote" hidden>Employment status is based on the employee's linked account. Workdays reflect recorded attendance.</p>
+      <noscript><p class="feedback">Please enable JavaScript to view the employee directory.</p></noscript>
+    </section>
+    <section class="team-banner"><div><p class="eyebrow">GREAT WORK STARTS WITH GREAT PEOPLE</p><h2>Let's build something together.</h2><p>Bring your ideas, your curiosity, and your ambition.</p></div><a href="mailto:hrteam@beedatatech.com">Connect with BeeData <span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer><a href="/">BeeData Technology</a><p>People. Ideas. Progress.</p><span>© <span id="copyrightYear">2026</span> BeeDataTech. All rights reserved.</span></footer>
+</body>
+</html>

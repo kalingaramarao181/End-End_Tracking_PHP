@@ -1,0 +1,18 @@
+{
+  "source": "https://beedatatech.com/UpdatedFiles/main.js",
+  "source_sha256": "ad19434b1db12ff427fab235a61587251ea784dbbdd03658598e696c99c9529e",
+  "upload_files": [
+    "employees.html",
+    "UpdatedFiles/employee-api.js",
+    "UpdatedFiles/employee-directory.js",
+    "UpdatedFiles/employee-directory.css",
+    "UpdatedFiles/employee-counter.css",
+    "UpdatedFiles/main.js",
+    "index.html"
+  ],
+  "api_endpoint": "https://e2e.beedatatech.com/public/employees",
+  "live_upload_completed": true,
+  "sftp_host": "access869825273.webspace-data.io",
+  "remote_document_root": ".",
+  "live_directory_url": "https://beedatatech.com/employees.html"
+}

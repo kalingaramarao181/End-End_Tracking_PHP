@@ -116,7 +116,8 @@ function assignEmployeeCompanyName($id) {
 }
 
 function removeEmployeeCompanyName($id) {
-    $result = removeCompanyUser((int)$id);
+    $input=json_decode(file_get_contents('php://input'),true) ?: [];
+    $result = removeCompanyUser((int)$id,$input['date_of_leaving'] ?? null);
     http_response_code($result['success'] ? 200 : (!empty($result['not_found']) ? 404 : 409));
     echo json_encode($result);
 }

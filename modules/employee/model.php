@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/AttendancePolicyService.php';
 require_once __DIR__ . '/EmployeeCollectionService.php';
 require_once __DIR__ . '/EmployeeProfileCompletion.php';
+require_once __DIR__ . '/EmployeeEmploymentService.php';
 
 function getEmployeeByUsername($username) {
     global $conn;
@@ -147,10 +148,11 @@ function fetchMonthlyAttendanceRoster($month) {
 }
 function fetchEmployeeById($id) {
     global $conn;
+    $leavingDateSelect=employeeHasLeavingDate($conn)?'e.date_of_leaving':'NULL AS date_of_leaving';
     $stmt = $conn->prepare("SELECT e.id, e.employee_id, e.firstname, e.lastname,
             TRIM(CONCAT_WS(' ', e.firstname, e.lastname)) AS legal_name,
             e.address, e.birthdate, e.contact_info, e.gender, e.position_id,
-            e.schedule_id, e.photo, e.created_on, e.user_id, e.date_of_joining, e.payroll_email, e.candidate_collection, e.payroll_profile,
+            e.schedule_id, e.photo, e.created_on, e.user_id, e.date_of_joining, $leavingDateSelect, e.payroll_email, e.candidate_collection, e.payroll_profile,
             u.nick_name AS company_name, u.email AS username,
             u.status AS user_status, u.last_login, p.position_name AS role
         FROM employees e
@@ -218,7 +220,8 @@ function assignCompanyUser($employeeId, $userId) {
         $stmt->execute();
         if ($stmt->get_result()->fetch_assoc()) throw new DomainException('This Company Name is already assigned to another employee.');
 
-        $stmt = $conn->prepare('UPDATE employees SET user_id = ? WHERE id = ?');
+        $clearLeavingDate=employeeHasLeavingDate($conn)?', date_of_leaving=NULL':'';
+        $stmt = $conn->prepare('UPDATE employees SET user_id = ?'.$clearLeavingDate.' WHERE id = ?');
         $stmt->bind_param('ii', $userId, $employeeId);
         if (!$stmt->execute()) throw new RuntimeException('Unable to assign Company Name.');
         $conn->commit();
@@ -230,18 +233,24 @@ function assignCompanyUser($employeeId, $userId) {
     }
 }
 
-function removeCompanyUser($employeeId) {
+function removeCompanyUser($employeeId, $leavingDate = null) {
     global $conn;
     $conn->begin_transaction();
     try {
-        $stmt = $conn->prepare('SELECT id, user_id FROM employees WHERE id = ? FOR UPDATE');
+        $stmt = $conn->prepare('SELECT id, user_id, date_of_joining FROM employees WHERE id = ? FOR UPDATE');
         $stmt->bind_param('i', $employeeId);
         $stmt->execute();
         $employee = $stmt->get_result()->fetch_assoc();
         if (!$employee) throw new RuntimeException('Employee not found.');
         if ($employee['user_id'] === null) throw new DomainException('This employee does not have a Company Name assigned.');
-        $stmt = $conn->prepare('UPDATE employees SET user_id = NULL WHERE id = ?');
-        $stmt->bind_param('i', $employeeId);
+        $leavingDate=employeeValidateLeavingDate($leavingDate ?? date('Y-m-d'),$employee['date_of_joining']);
+        if (employeeHasLeavingDate($conn)) {
+            $stmt=$conn->prepare('UPDATE employees e LEFT JOIN users u ON u.id=e.user_id SET e.user_id=NULL,e.date_of_leaving=?,e.position_id=COALESCE(u.position_id,e.position_id) WHERE e.id=?');
+            $stmt->bind_param('si',$leavingDate,$employeeId);
+        } else {
+            $stmt=$conn->prepare('UPDATE employees SET user_id=NULL WHERE id=?');
+            $stmt->bind_param('i',$employeeId);
+        }
         if (!$stmt->execute()) throw new RuntimeException('Unable to remove Company Name.');
         $conn->commit();
         return ['success' => true, 'message' => 'Company Name mapping removed successfully.'];
@@ -346,6 +355,7 @@ function updateEmployeeRecord($id, array $data, bool $personalOnly=false) {
 
         foreach (['employee_id','firstname','lastname','address','birthdate','contact_info','gender','position_id','schedule_id','photo','date_of_joining'] as $field) if (!array_key_exists($field,$data)) $data[$field]=$existing[$field] ?? '';
         $data=employeeValidateRecord($data,false);
+        if (!empty($existing['date_of_leaving'])) employeeValidateLeavingDate($existing['date_of_leaving'],$data['date_of_joining']);
         $stmt=$conn->prepare('UPDATE employees SET employee_id=?,firstname=?,lastname=?,address=?,birthdate=?,contact_info=?,gender=?,position_id=?,schedule_id=?,photo=?,date_of_joining=? WHERE id=?');
         $joining=$data['date_of_joining']?:null;
         $stmt->bind_param('sssssssiissi',$data['employee_id'],$data['firstname'],$data['lastname'],$data['address'],$data['birthdate'],$data['contact_info'],$data['gender'],$data['position_id'],$data['schedule_id'],$data['photo'],$joining,$id);employeeExecute($stmt);

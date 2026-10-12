@@ -218,6 +218,21 @@ if ($method === 'DELETE' && preg_match('#^employees/(\d+)$#', $path, $matches)) 
     requirePermission('employees','can_delete');
     deleteEmployeeEntry((int)$matches[1]);exit;
 }
+if ($method === 'PUT' && preg_match('#^employees/([0-9]+)/leaving-date$#',$path,$matches)) {
+    requirePermission('employees','can_edit');
+    if (!$isAdmin) employeeAdminDenied();
+    try {
+        $input=json_decode(file_get_contents('php://input'),true) ?: [];
+        echo json_encode(employeeSetLeavingDate((int)$matches[1],$input['date_of_leaving'] ?? null));
+    } catch (InvalidArgumentException $error) {
+        http_response_code($error->getMessage()==='Employee not found.'?404:422);
+        echo json_encode(['success'=>false,'message'=>$error->getMessage()]);
+    } catch (Throwable $error) {
+        error_log('Employee leaving date: '.$error->getMessage());
+        http_response_code(503);echo json_encode(['success'=>false,'message'=>'Leaving date could not be saved. Verify the leaving-date migration is applied.']);
+    }
+    exit;
+}
 if ($method === 'POST' && $path === 'employee/create') {
     requirePermission('employees','can_create');
     createEmployee($user);

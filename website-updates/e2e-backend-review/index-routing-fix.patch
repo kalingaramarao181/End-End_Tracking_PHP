@@ -1,0 +1,20 @@
+--- index.php
++++ index.php
+@@ -5,6 +5,8 @@
+ error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+ 
+ 
++
++$request = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+ 
+ // Public employee access has its own policy and must precede global CORS/OPTIONS.
+ if (preg_match('#^/public/employees(?:/|$)#', $request)) {
+@@ -43,7 +45,7 @@
+ | http://localhost/api/auth/login
+ | REQUEST_URI = /api/auth/login
+ */
+-$request = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
++
+ 
+ /*
+ |--------------------------------------------------------------------------
