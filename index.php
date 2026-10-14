@@ -75,6 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 | 2. Generic routes later
 */
 
+if (preg_match('#^/resume-match(?:/|$)#', $request)) {
+    require_once __DIR__.'/modules/resume_match/routes.php';
+    exit;
+}
+
 // ---------------------------------------------------------------------
 // PUBLIC HOME DASHBOARD AGGREGATES
 // URL: GET /home/summary

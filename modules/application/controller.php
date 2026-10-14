@@ -384,7 +384,7 @@ class ApplicationController
 
         // Module-specific forms submit only their own fields. Preserve every
         // omitted application value instead of clearing unrelated data.
-        foreach (['date_created','candidate_id','candidate_name','vendor','poc','feedback','client','emp_loc','rate','role','candidate_loc','remarks'] as $field) {
+        foreach (['date_created','candidate_id','candidate_name','vendor','poc','feedback','candidate_feedback','client','emp_loc','rate','role','candidate_loc','remarks'] as $field) {
             if (!array_key_exists($field, $data)) {
                 $data[$field] = $existingData[$field] ?? null;
             }

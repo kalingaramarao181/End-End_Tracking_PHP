@@ -317,6 +317,7 @@ class ApplicationModel
             vendor,
             poc,
             feedback,
+            candidate_feedback,
             client,
             emp_loc,
             rate,
@@ -329,7 +330,7 @@ class ApplicationModel
             visa_path,
             msc_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ";
 
         $stmt = $this->conn->prepare($sql);
@@ -360,6 +361,7 @@ class ApplicationModel
         $vendor = $data['vendor'] ?? null;
         $poc = $data['poc'] ?? null;
         $feedback = $data['feedback'] ?? null;
+        $candidateFeedback = $data['candidate_feedback'] ?? null;
         $client = $data['client'] ?? null;
         $empLoc = $data['emp_loc'] ?? null;
         $rate = $data['rate'] ?? null;
@@ -374,7 +376,7 @@ class ApplicationModel
         $mscPath = $data['msc_path'] ?? null;
 
         $stmt->bind_param(
-            "siisssssssssssssss",
+            "siissssssssssssssss",
             $dateCreated,
             $employeeId,
             $candidateId,
@@ -382,6 +384,7 @@ class ApplicationModel
             $vendor,
             $poc,
             $feedback,
+            $candidateFeedback,
             $client,
             $empLoc,
             $rate,
@@ -686,6 +689,7 @@ class ApplicationModel
                 vendor = ?,
                 poc = ?,
                 feedback = ?,
+                candidate_feedback = ?,
                 client = ?,
                 emp_loc = ?,
                 rate = ?,
@@ -727,6 +731,7 @@ class ApplicationModel
         $vendor = $data['vendor'] ?? null;
         $poc = $data['poc'] ?? null;
         $feedback = $data['feedback'] ?? null;
+        $candidateFeedback = $data['candidate_feedback'] ?? null;
         $client = $data['client'] ?? null;
         $empLoc = $data['emp_loc'] ?? null;
         $rate = $data['rate'] ?? null;
@@ -740,7 +745,7 @@ class ApplicationModel
         $mscPath = $data['msc_path'] ?? null;
 
         $stmt->bind_param(
-            "siisssssssssssssssi",
+            "siissssssssssssssssi",
             $dateCreated,
             $employeeId,
             $candidateId,
@@ -748,6 +753,7 @@ class ApplicationModel
             $vendor,
             $poc,
             $feedback,
+            $candidateFeedback,
             $client,
             $empLoc,
             $rate,
