@@ -14,7 +14,7 @@ function resumeMatchRespond($data,$status=200) {
 }
 try {
     if ($method==='GET' && $path==='/resume-match/status') {
-        resumeMatchRespond(['success'=>true,'data'=>['history_ready'=>resumeMatchHistoryReady($conn),'sources'=>['upload','demo'],'live_techfetch_enabled'=>false]]);
+        resumeMatchRespond(['success'=>true,'data'=>['history_ready'=>resumeMatchHistoryReady($conn),'sources'=>['upload','demo','techfetch','techfetch-demo'],'supabase_search_supported'=>true,'live_techfetch_enabled'=>false]]);
     }
     if ($path==='/resume-match/history' && in_array($method,['GET','POST'],true)) {
         if (!resumeMatchHistoryReady($conn)) resumeMatchRespond(['success'=>false,'message'=>'Resume Match history is not configured. Apply the Resume Match database migration.'],503);

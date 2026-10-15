@@ -11,7 +11,7 @@ function resumeMatchValidateHistory($input) {
     $score = filter_var($input['top_score'] ?? null, FILTER_VALIDATE_INT);
     $jdLength = function_exists('mb_strlen') ? mb_strlen($jd,'UTF-8') : preg_match_all('/./us',$jd);
     if ($jdLength < 50 || $jdLength > 5000) throw new InvalidArgumentException('History requires a job description between 50 and 5,000 characters.');
-    if (!in_array($source, ['upload', 'demo'], true)) throw new InvalidArgumentException('Choose uploads or labelled demo search.');
+    if (!in_array($source, ['upload', 'demo', 'techfetch', 'techfetch-demo'], true)) throw new InvalidArgumentException('Choose a valid resume source.');
     if (!in_array($state, $states, true)) throw new InvalidArgumentException('Choose a valid US state.');
     if ($count === false || $count < 1 || $count > 50) throw new InvalidArgumentException('Compare between 1 and 50 candidates.');
     if ($score === false || $score < 0 || $score > 100) throw new InvalidArgumentException('Invalid match score.');
