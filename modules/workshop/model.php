@@ -20,6 +20,10 @@ function wsVisibility($user,$scope,$alias='w'){
  if(in_array($scope,['TEAM','DEPARTMENT','OFFICE'],true)){$sql.=" OR $alias.position_id=?";$params[]=(int)$user['position_id'];}return [$sql.')',$params];
 }
 function wsMayWrite($row,$user,$scope){return $scope==='ALL'||(int)$row['created_by']===(int)$user['id']||(int)$row['presenter_id']===(int)$user['id']||(in_array($scope,['TEAM','DEPARTMENT','OFFICE'],true)&&(int)$row['position_id']===(int)$user['position_id']);}
+// Prefer the assignment used by Employees; accept an unclaimed legacy mapping.
+function wsEmployeeJoin($user='u',$employee='e'){
+ return " LEFT JOIN employees $employee ON $employee.id=COALESCE((SELECT MIN(wl.id) FROM employees wl WHERE wl.user_id=$user.id),(SELECT wo.id FROM employees wo WHERE wo.id=$user.employee_id AND (wo.user_id IS NULL OR wo.user_id=$user.id) LIMIT 1)) ";
+}
 function wsNameSql($user='u',$employee='e'){return "COALESCE(NULLIF(TRIM(CONCAT(COALESCE($employee.firstname,''),' ',COALESCE($employee.lastname,''))),''),NULLIF($user.nick_name,''),CONCAT('User #',$user.id))";}
 function wsWhere($filters,$user,$scope){
  [$visible,$params]=wsVisibility($user,$scope);$parts=['w.deleted_at IS NULL',$visible];
@@ -32,7 +36,7 @@ function wsWhere($filters,$user,$scope){
 }
 function wsHydrate($db,$rows,$user,$permission){
  if(!$rows)return [];$ids=array_map('intval',array_column($rows,'id'));$in=implode(',',$ids);$attendees=[];$photos=[];$name=wsNameSql();
- $r=$db->query("SELECT a.workshop_id,a.user_id AS id,COALESCE($name,CONCAT('Former user #',a.user_id)) AS name,u.position_id FROM workshop_attendees a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN employees e ON e.id=u.employee_id WHERE a.workshop_id IN($in) ORDER BY name");while($a=$r->fetch_assoc()){$a['id']=(int)$a['id'];$attendees[$a['workshop_id']][]=$a;}
+ $employeeJoin=wsEmployeeJoin();$r=$db->query("SELECT a.workshop_id,a.user_id AS id,COALESCE($name,CONCAT('Former user #',a.user_id)) AS name,u.position_id FROM workshop_attendees a LEFT JOIN users u ON u.id=a.user_id $employeeJoin WHERE a.workshop_id IN($in) ORDER BY name");while($a=$r->fetch_assoc()){$a['id']=(int)$a['id'];$attendees[$a['workshop_id']][]=$a;}
  $r=$db->query("SELECT id,workshop_id,original_name,mime_type,file_size FROM workshop_photos WHERE workshop_id IN($in) ORDER BY id");while($p=$r->fetch_assoc()){$p['id']=(int)$p['id'];$p['file_size']=(int)$p['file_size'];$photos[$p['workshop_id']][]=$p;}
  foreach($rows as &$row){$row['id']=(int)$row['id'];$row['position_id']=(int)$row['position_id'];$row['presenter_id']=(int)$row['presenter_id'];$row['day']=(new DateTimeImmutable($row['meeting_date']))->format('l');$row['attendees']=$attendees[$row['id']]??[];$row['photos']=$photos[$row['id']]??[];$write=wsMayWrite($row,$user,$permission['data_scope']??'OWN');$row['can_edit']=$write&&!empty($permission['can_edit']);$row['can_delete']=$write&&!empty($permission['can_delete']);}unset($row);return $rows;
 }
@@ -41,8 +45,8 @@ function wsList($db,$filters,$user,$permission,$export=false){
  $stats=wsQuery($db,"SELECT COUNT(*) total,COUNT(DISTINCT w.position_id) teams,COUNT(DISTINCT w.presenter_id) presenters,COALESCE(SUM((SELECT COUNT(*) FROM workshop_photos sp WHERE sp.workshop_id=w.id)),0) photos FROM workshop_meetings w WHERE $where",$params)->get_result()->fetch_assoc();$total=(int)$stats['total'];foreach($stats as &$value)$value=(int)$value;unset($value);
  if($export&&$total>500)throw new InvalidArgumentException('More than 500 meetings match. Narrow the filters before exporting.');
  $limit=$export?500:max(5,min(100,(int)($filters['limit']??5)));$pages=max(1,(int)ceil($total/$limit));$page=min($pages,max(1,(int)($filters['page']??1)));$offset=($page-1)*$limit;
- $presenter=wsNameSql('pu','pe');$creator=wsNameSql('cu','ce');
- $sql="SELECT w.*,CASE WHEN w.position_id=0 THEN 'All teams' ELSE p.position_name END AS team_name,$presenter AS presenter_name,$creator AS created_by_name FROM workshop_meetings w LEFT JOIN positions p ON p.id=w.position_id LEFT JOIN users pu ON pu.id=w.presenter_id LEFT JOIN employees pe ON pe.id=pu.employee_id LEFT JOIN users cu ON cu.id=w.created_by LEFT JOIN employees ce ON ce.id=cu.employee_id WHERE $where ORDER BY w.meeting_date DESC,w.id DESC LIMIT $limit OFFSET $offset";
+ $presenter=wsNameSql('pu','pe');$creator=wsNameSql('cu','ce');$presenterJoin=wsEmployeeJoin('pu','pe');$creatorJoin=wsEmployeeJoin('cu','ce');
+ $sql="SELECT w.*,CASE WHEN w.position_id=0 THEN 'All teams' ELSE p.position_name END AS team_name,$presenter AS presenter_name,$creator AS created_by_name FROM workshop_meetings w LEFT JOIN positions p ON p.id=w.position_id LEFT JOIN users pu ON pu.id=w.presenter_id $presenterJoin LEFT JOIN users cu ON cu.id=w.created_by $creatorJoin WHERE $where ORDER BY w.meeting_date DESC,w.id DESC LIMIT $limit OFFSET $offset";
  $rows=wsQuery($db,$sql,$params)->get_result()->fetch_all(MYSQLI_ASSOC);
  return ['items'=>wsHydrate($db,$rows,$user,$permission),'total'=>$total,'page'=>$page,'limit'=>$limit,'total_pages'=>$pages,'stats'=>$stats];
 }
@@ -58,7 +62,7 @@ function wsUploads($files){
 }
 function wsSave($db,$input,$files,$user,$permission,$existing=null){
  $data=wsValidate($input);if($data['position_id']!==0&&!wsQuery($db,'SELECT id FROM positions WHERE id=?',[$data['position_id']])->get_result()->fetch_assoc())throw new InvalidArgumentException('The selected team no longer exists.');
- $ids=$data['attendee_ids'];$in=implode(',',$ids);$found=$db->query("SELECT u.id FROM users u INNER JOIN employees e ON e.id=u.employee_id WHERE u.id IN($in) AND u.status='Active'")->num_rows;if($found!==count($ids))throw new InvalidArgumentException('Select only active users linked to employees. Refresh the form.');
+ $ids=$data['attendee_ids'];$in=implode(',',$ids);$employeeJoin=wsEmployeeJoin();$found=$db->query("SELECT u.id FROM users u $employeeJoin WHERE e.id IS NOT NULL AND u.id IN($in) AND u.status='Active'")->num_rows;if($found!==count($ids))throw new InvalidArgumentException('Select only active users linked to employees. Refresh the form.');
  if($data['position_id']!==0){$matched=wsQuery($db,"SELECT COUNT(*) total FROM users WHERE id IN($in) AND position_id=?",[$data['position_id']])->get_result()->fetch_assoc();if((int)$matched['total']!==count($ids))throw new InvalidArgumentException('Select presenter and attendees from the selected team, or choose All teams.');}
  $old=[];if($existing)$old=wsQuery($db,'SELECT id,storage_name FROM workshop_photos WHERE workshop_id=?',[(int)$existing['id']])->get_result()->fetch_all(MYSQLI_ASSOC);
  $keep=$existing?wsIds($input['keep_photo_ids']??array_column($old,'id'),'saved photos'):[];$oldIds=array_map('intval',array_column($old,'id'));if(array_diff($keep,$oldIds))throw new InvalidArgumentException('Invalid saved photo selection.');

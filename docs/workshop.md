@@ -56,3 +56,9 @@ Meeting dates are calendar dates with no timezone conversion; weekday is calcula
 - `node scripts/verify_workshop_browser.js` tests the production build in isolated Chrome using fictional API fixtures. It reads back the actual downloaded Excel workbook and confirms all filtered rows and an embedded photo. Screenshots and downloads remain in ignored `.server-audit/workshop-browser`.
 
 The Python/JavaScript verification scripts are optional development tools; none is needed to run Workshop in production.
+
+## Employee and company labels
+
+Workshop resolves the current employee assignment through `employees.user_id`, falling back to `users.employee_id` only when that employee is not assigned to another account. Presenter, attendee and creator names follow this same rule. Eligible selections remain active users linked to employees; the saved presenter/attendee ID is always the user ID. Company labels come from `users.nick_name` (the existing Company Name / Alias field). Presenter options and selected chips show employee plus company; attendee cards show employee, company and position. Attendee search includes company names. New meetings default to All teams, with team filtering still enforced on the backend.
+
+Deploy both Workshop PHP files and rebuild/deploy the frontend for this correction. No database migration or account-link rewriting is needed.
