@@ -4,11 +4,12 @@ Workshop appears at **People & Workplace > Workshop**, route `/dashboard/worksho
 
 ## Included
 
-- Meeting date and calculated weekday, team from existing positions, topic, presenter from existing users, user attendees, private meeting photos and remarks.
+- Meeting date and calculated weekday, team from existing positions, topic, presenter and attendees from active users linked to employee records, private meeting photos and remarks.
+- Selecting a team restricts both presenter and attendees to that position. All teams supports cross-team meetings; switching teams removes incompatible selections. The backend enforces eligibility and membership. Existing tables support the All teams value (position_id 0), so no additional migration is required.
 - Add/view/edit/delete with existing resource permissions. The presenter is automatically included in attendees.
 - Date and Day are the first two table and Excel columns. Filters: topic/remarks search, team, presenter, attendee and date range. Pagination offers 5, 10, 25 and 50 rows (default/minimum 5).
 - Responsive light/dark design, accessible centered dialogs, photo gallery and cancellation during exports. Horizontal scrolling is contained in the table; actions stay visible at the right.
-- Excel exports every matching meeting, not just the visible page. The branded workbook includes a meeting sheet with full metadata/remarks/names, an attendee-by-attendee detail sheet, and optional embedded photo thumbnails in a photo sheet. Each sheet begins with Date and Day. Photos are included by default. Export is limited to 500 matching meetings; narrow filters for larger ranges. Unavailable photos are explicitly marked rather than silently omitted.
+- Excel exports every matching meeting, not just the visible page. The branded workbook includes a meeting sheet with full metadata/remarks/names, an attendee-by-attendee detail sheet, and optional embedded photo thumbnails directly in each meeting row?s Photos column. Each sheet begins with Date and Day. Created and Updated columns are omitted. Photos are included by default. Export is limited to 500 matching meetings; narrow filters for larger ranges. Unavailable photos are explicitly marked in the Photos column rather than silently omitted.
 
 ## Backend deployment
 
@@ -46,7 +47,7 @@ Deploy the complete output from `npm run build`. Workshop reuses React, Axios, E
 - `GET /workshops/export`: all scoped filtered metadata (requires export permission).
 - `GET /workshops/photos/{id}`: authenticated image stream; never a public upload URL.
 
-Meeting dates are calendar dates with no timezone conversion; weekday is calculated from the exact saved date. Audit timestamps are UTC and labelled UTC in Excel.
+Meeting dates are calendar dates with no timezone conversion; weekday is calculated from the exact saved date. Audit timestamps remain on the backend; they are not included as report columns.
 
 ## Verification helpers (development only)
 

@@ -10,7 +10,7 @@ function wsRespond($data,$status=200){http_response_code($status);header('Conten
 try{
  if($method==='POST'){$max=wsBytes(ini_get('post_max_size'));if($max>0&&(int)($_SERVER['CONTENT_LENGTH']??0)>$max)wsRespond(['success'=>false,'message'=>'The request exceeds the server upload limit. Use fewer or smaller photos.'],413);}
  if($method==='GET'&&$path==='/workshops/options'){
-  $name=wsNameSql();$users=$conn->query("SELECT u.id,$name AS name,u.position_id,u.status,COALESCE(p.position_name,'') position_name FROM users u LEFT JOIN employees e ON e.id=u.employee_id LEFT JOIN positions p ON p.id=u.position_id ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+  $name=wsNameSql();$users=$conn->query("SELECT u.id,$name AS name,u.position_id,u.status,COALESCE(p.position_name,'') position_name FROM users u INNER JOIN employees e ON e.id=u.employee_id LEFT JOIN positions p ON p.id=u.position_id WHERE u.status='Active' ORDER BY name")->fetch_all(MYSQLI_ASSOC);
   $positions=$conn->query("SELECT id,position_name,status FROM positions ORDER BY position_name")->fetch_all(MYSQLI_ASSOC);
   $caps=[];foreach(['create','edit','delete','export','upload'] as $action)$caps[$action]=!empty($permission['can_'.$action]);
   wsRespond(['success'=>true,'data'=>['users'=>$users,'positions'=>$positions,'permissions'=>$caps,'limits'=>wsLimits()]]);

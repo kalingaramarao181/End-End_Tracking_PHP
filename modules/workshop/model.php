@@ -9,7 +9,7 @@ function wsValidate($data){
  $topic=trim((string)($data['topic']??''));$remarks=trim((string)($data['remarks']??''));
  if($topic===''||mb_strlen($topic)>200)throw new InvalidArgumentException('Topic is required and must be 200 characters or fewer.');
  if(mb_strlen($remarks)>4000)throw new InvalidArgumentException('Remarks must be 4,000 characters or fewer.');
- foreach(['position_id','presenter_id'] as $key)if(!ctype_digit((string)($data[$key]??''))||(int)$data[$key]<1)throw new InvalidArgumentException('Select a team and meeting presenter.');
+ foreach(['position_id','presenter_id'] as $key)if(!ctype_digit((string)($data[$key]??''))||(int)$data[$key]<($key==='position_id'?0:1))throw new InvalidArgumentException('Select a team and meeting presenter.');
  $ids=wsIds($data['attendee_ids']??[],'attendees');if(!$ids)throw new InvalidArgumentException('Select at least one meeting attendee.');
  $ids=array_values(array_unique(array_merge($ids,[(int)$data['presenter_id']])));if(count($ids)>200)throw new InvalidArgumentException('Select no more than 200 attendees.');
  return ['meeting_date'=>$date,'position_id'=>(int)$data['position_id'],'topic'=>$topic,'presenter_id'=>(int)$data['presenter_id'],'remarks'=>$remarks,'attendee_ids'=>$ids];
@@ -42,7 +42,7 @@ function wsList($db,$filters,$user,$permission,$export=false){
  if($export&&$total>500)throw new InvalidArgumentException('More than 500 meetings match. Narrow the filters before exporting.');
  $limit=$export?500:max(5,min(100,(int)($filters['limit']??5)));$pages=max(1,(int)ceil($total/$limit));$page=min($pages,max(1,(int)($filters['page']??1)));$offset=($page-1)*$limit;
  $presenter=wsNameSql('pu','pe');$creator=wsNameSql('cu','ce');
- $sql="SELECT w.*,p.position_name AS team_name,$presenter AS presenter_name,$creator AS created_by_name FROM workshop_meetings w LEFT JOIN positions p ON p.id=w.position_id LEFT JOIN users pu ON pu.id=w.presenter_id LEFT JOIN employees pe ON pe.id=pu.employee_id LEFT JOIN users cu ON cu.id=w.created_by LEFT JOIN employees ce ON ce.id=cu.employee_id WHERE $where ORDER BY w.meeting_date DESC,w.id DESC LIMIT $limit OFFSET $offset";
+ $sql="SELECT w.*,CASE WHEN w.position_id=0 THEN 'All teams' ELSE p.position_name END AS team_name,$presenter AS presenter_name,$creator AS created_by_name FROM workshop_meetings w LEFT JOIN positions p ON p.id=w.position_id LEFT JOIN users pu ON pu.id=w.presenter_id LEFT JOIN employees pe ON pe.id=pu.employee_id LEFT JOIN users cu ON cu.id=w.created_by LEFT JOIN employees ce ON ce.id=cu.employee_id WHERE $where ORDER BY w.meeting_date DESC,w.id DESC LIMIT $limit OFFSET $offset";
  $rows=wsQuery($db,$sql,$params)->get_result()->fetch_all(MYSQLI_ASSOC);
  return ['items'=>wsHydrate($db,$rows,$user,$permission),'total'=>$total,'page'=>$page,'limit'=>$limit,'total_pages'=>$pages,'stats'=>$stats];
 }
@@ -57,8 +57,9 @@ function wsUploads($files){
  return $out;
 }
 function wsSave($db,$input,$files,$user,$permission,$existing=null){
- $data=wsValidate($input);if(!wsQuery($db,'SELECT id FROM positions WHERE id=?',[$data['position_id']])->get_result()->fetch_assoc())throw new InvalidArgumentException('The selected team no longer exists.');
- $ids=$data['attendee_ids'];$in=implode(',',$ids);$found=$db->query("SELECT id FROM users WHERE id IN($in)")->num_rows;if($found!==count($ids))throw new InvalidArgumentException('A selected user no longer exists. Refresh the form.');
+ $data=wsValidate($input);if($data['position_id']!==0&&!wsQuery($db,'SELECT id FROM positions WHERE id=?',[$data['position_id']])->get_result()->fetch_assoc())throw new InvalidArgumentException('The selected team no longer exists.');
+ $ids=$data['attendee_ids'];$in=implode(',',$ids);$found=$db->query("SELECT u.id FROM users u INNER JOIN employees e ON e.id=u.employee_id WHERE u.id IN($in) AND u.status='Active'")->num_rows;if($found!==count($ids))throw new InvalidArgumentException('Select only active users linked to employees. Refresh the form.');
+ if($data['position_id']!==0){$matched=wsQuery($db,"SELECT COUNT(*) total FROM users WHERE id IN($in) AND position_id=?",[$data['position_id']])->get_result()->fetch_assoc();if((int)$matched['total']!==count($ids))throw new InvalidArgumentException('Select presenter and attendees from the selected team, or choose All teams.');}
  $old=[];if($existing)$old=wsQuery($db,'SELECT id,storage_name FROM workshop_photos WHERE workshop_id=?',[(int)$existing['id']])->get_result()->fetch_all(MYSQLI_ASSOC);
  $keep=$existing?wsIds($input['keep_photo_ids']??array_column($old,'id'),'saved photos'):[];$oldIds=array_map('intval',array_column($old,'id'));if(array_diff($keep,$oldIds))throw new InvalidArgumentException('Invalid saved photo selection.');
  $uploads=wsUploads($files);if(isset($input['photo_count'])&&(!ctype_digit((string)$input['photo_count'])||(int)$input['photo_count']!==count($uploads)))throw new InvalidArgumentException('Not all photos reached the server. Use fewer photos or ask your administrator to check PHP upload limits.');$removed=array_filter($old,fn($p)=>!in_array((int)$p['id'],$keep,true));if(($uploads||$removed)&&empty($permission['can_upload']))throw new DomainException('Photo upload permission is required.');if(count($keep)+count($uploads)>wsLimits()['max_photos'])throw new InvalidArgumentException('Too many photos for one meeting.');
