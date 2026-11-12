@@ -2,6 +2,8 @@
 
 TeamFlow now uses E2E authentication, permissions, React pages and the PHP API. No separate TeamFlow Node or Python service is needed.
 
+**Deploying migrations alone does not import the original records.** Follow [Server data import](teamflow-server-data-import.md) and use the private import package to populate each new server database safely.
+
 ## Local import completed
 
 Imported from `team_flow_manager 2.sql` into the local `e2e_tracking` database:
@@ -66,7 +68,7 @@ Candidate attendance is available inside **My Profile → Attendance**, with the
 - While working, **Update work** saves completed work, task progress percentage and optional blockers/next steps. Turning off the switch opens a completion form; submission records the server logout time and ends the session. The navbar presence indicator refreshes after clock actions.
 - My Profile includes monthly attendance cards, a daily-hours chart, a clickable calendar and paginated daily work details. Calendar dates filter the related sessions. US Eastern Time is the common work-date standard; new clock instants also store UTC timestamps for accurate elapsed hours across daylight-saving transitions. A session can cross midnight and an ISO week/year boundary.
 - Each newly completed profile session adds its elapsed seconds to an attendance-generated **Draft** weekly timesheet, grouped by candidate, project and ISO week. Overnight work is split across the correct Eastern dates and weeks. Task progress is a work-status measure; it does not multiply or reduce attendance hours.
-- The **Timesheets** profile tab shows the candidate's sheets. Attendance-generated hours and dates are read-only, and daily work entries are visible in **View**. Candidates submit the draft for approval; authorized reviewers approve/reject it. Pending/Approved sheets remain locked. If additional work is recorded after submission, it goes into a new draft rather than changing an approved sheet. Repeated clock-outs or synchronization cannot duplicate work entries.
+- The **Timesheets** profile tab shows the candidate's sheets. Attendance-generated Draft/Rejected hours are editable with an adjustment reason and audit trail; dates remain tied to their source week. Daily work progress is visible below the weekly grid. Candidates submit the draft for approval; authorized reviewers approve/reject it. Pending/Approved sheets remain locked. If additional work is recorded after submission, it goes into a new draft rather than changing an approved sheet. Repeated clock-outs or synchronization cannot duplicate work entries.
 - Previously imported/manual timesheets and historical attendance are preserved. Historical sessions are not automatically backfilled into new timesheets, which would double-count previously entered work. Old unclosed legacy sessions display **Needs review** in history and do not keep the new workday switch turned on.
 - Personal details display as profile information, with a section edit action. The profile hero includes photo upload/update and removal with confirmation, candidate ID, contact details and completion status. Family, education, experience, certifications, references, documents and declaration remain editable in their own tabs.
 
@@ -110,7 +112,7 @@ For a full fresh database move instead of an import into an existing server, res
 
 - Migration applied twice in an isolated clone; complete import and per-column comparisons passed.
 - Actual local import: 74 account hashes/usernames preserved, 1,978 legacy/work rows verified, and repeat import did not duplicate data. Original E2E user/employee/attendance rows and older legacy tables remained unchanged.
-- 18 React tests passed for form edits, pagination/filter requests, switch/work-form submission, calendar date selection, generated timesheet read-only hours, current address edits, missing file replacement, SQL parsing and ISO week boundaries.
+- 18 React tests passed for form edits, pagination/filter requests, switch/work-form submission, calendar date selection, generated timesheet hour adjustments, current address edits, missing file replacement, SQL parsing and ISO week boundaries.
 - Isolated real PHP API checks passed shared login, OWN access, cross-user rejection, project assignment, timesheet approval/fractional hours, private documents/photos, missing attachment replacement, remote candidate clocking while company IP restrictions remain enabled, progress updates, automatic timesheets, approved-sheet locking and clock duplicate prevention. Photo removal invalidates the previous photo download. Invalid attachments and photos roll back their accompanying saves.
 - Worklog allocation tests passed overnight splitting, ISO week-year rollover, both daylight-saving transitions and repeated synchronization. A fresh pre-update backup comparison confirmed current account credentials, candidate profiles, imported work records and employee attendance were preserved.
 - Chrome checks against the production build passed route/sidebar access, edit/save, pagination, Awaiting upload display, Excel download/read-back, profile current address changes and mobile dark-mode page fit, with no JavaScript runtime exceptions.
@@ -119,3 +121,8 @@ For a full fresh database move instead of an import into an existing server, res
 Optional verification scripts are development tools, not deployment services: `scripts/verify_teamflow_browser.js`, `scripts/test_teamflow_api.py` and `scripts/prepare_teamflow_import.js`. The Python test uses the private `.server-audit` test database fixtures and refuses a non-test database.
 
 Local backups, manifests and audit results are under ignored `.server-audit/`. They must remain private and must not be included in public deployment uploads.
+
+
+## Weekly collaboration upgrade
+
+See [Weekly timesheets and project collaboration](teamflow-weekly-timesheets.md) for the latest weekly grid, review workflow, notifications, scoped project discussions and deployment checklist. Apply `20261113_teamflow_weekly_collaboration.sql` after the earlier migrations and deploy the updated `modules/chat/model.php` and `modules/chat/routes.php` alongside the complete TeamFlow backend and React build.

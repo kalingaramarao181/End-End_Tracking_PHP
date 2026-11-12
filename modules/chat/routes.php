@@ -2,7 +2,7 @@
 require_once __DIR__.'/../../middleware/auth.php';
 require_once __DIR__.'/../../middleware/role.php';
 require_once __DIR__.'/model.php';
-authenticate(); requirePermission('chat','view');
+authenticate(); requirePermission(str_starts_with(parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH),'/chat/notifications')?'chat_notifications':'chat','view');
 $m=new ChatModel(); $u=(int)authUser()['id']; $method=$_SERVER['REQUEST_METHOD']; $path=parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH);
 function chatBody(){return json_decode(file_get_contents('php://input'),true)?:[];}
 function chatOut($code,$data){http_response_code($code);echo json_encode($data);exit;}

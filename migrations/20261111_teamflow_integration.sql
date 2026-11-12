@@ -1,6 +1,11 @@
 -- TeamFlow integration: additive and repeatable. Never import the source dump directly into E2E.
 
 -- Apply this schema, then run the CLI importer against its prepared private manifest.
+-- IMPORTANT: this file contains schema/permission seeds, NOT the original TeamFlow records.
+-- Server data installation: docs/teamflow-server-data-import.md.
+-- After all four TeamFlow migrations, run from the PHP API directory:
+-- php scripts/import_teamflow.php --manifest=/private/teamflow-import.json --uploads=/private/original-server --apply
+-- The importer preserves password hashes and remaps user IDs for the destination E2E database.
 
 CREATE TABLE IF NOT EXISTS teamflow_candidates (
  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
