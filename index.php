@@ -75,6 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 | 2. Generic routes later
 */
 
+if (preg_match('#^/teamflow(?:/|$)#', $request)) {
+    require_once __DIR__.'/modules/teamflow/routes.php';
+    exit;
+}
+
 if (preg_match('#^/workshops(?:/|$)#', $request)) {
     require_once __DIR__.'/modules/workshop/routes.php';
     exit;

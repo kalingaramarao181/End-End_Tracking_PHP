@@ -106,11 +106,12 @@ if (
 */
 if (
     $method === 'PUT' &&
-    preg_match('#^/application/update/(\d+)$#', $requestUri, $matches)
+    preg_match('#^/application/update
+    /(\d+)$#', $requestUri, $matches)
 ) {
     require_once __DIR__ . '/../../middleware/auth.php';
     require_once __DIR__ . '/../../middleware/role.php';
-
+    
     authenticate();
     requirePermission('applications', 'can_edit');
 

@@ -76,6 +76,10 @@ class AuthModel
         $user=$userStmt->get_result()->fetch_assoc();
         if(!$user)return null;
         $isSuper=(int)$user['position_id']===1;
+        $teamflow=null;
+        $teamflowTable=$this->conn->query("SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN('teamflow_candidates','teamflow_files')");
+        if($teamflowTable->num_rows===2){$candidateStmt=$this->conn->prepare("SELECT c.id,c.firstname,c.lastname,(SELECT MAX(f.id) FROM teamflow_files f WHERE f.entity_type='candidate_photo' AND f.entity_id=c.id AND f.missing=0) photo_id FROM teamflow_candidates c WHERE c.user_id=? LIMIT 1");$candidateStmt->bind_param('i',$userId);$candidateStmt->execute();$teamflow=$candidateStmt->get_result()->fetch_assoc();}
+
         $columns=['view','create','edit','delete','export','import','upload','download','approve','reject','assign','manage','print','share'];
         $select=[];
         foreach($columns as $action){
@@ -98,7 +102,7 @@ class AuthModel
                 'permissions'=>$permissions,'scope'=>$row['data_scope']];
         }
         return ['user'=>['id'=>(int)$user['id'],'employee_id'=>(int)$user['employee_id'],'username'=>$user['nick_name'],
-            'email'=>$user['email'],'position_id'=>(int)$user['position_id'],'position'=>$user['position_name'],
+            'is_teamflow_candidate'=>(bool)$teamflow,'teamflow_candidate_id'=>$teamflow?(int)$teamflow['id']:null,'teamflow_photo_id'=>$teamflow&&!empty($teamflow['photo_id'])?(int)$teamflow['photo_id']:null,'display_name'=>$teamflow?trim($teamflow['firstname'].' '.$teamflow['lastname']):null,'email'=>$user['email'],'position_id'=>(int)$user['position_id'],'position'=>$user['position_name'],
             'status'=>$user['status'],'last_login'=>$user['last_login'],'super_admin'=>$isSuper],'resources'=>$resources];
     }
 
