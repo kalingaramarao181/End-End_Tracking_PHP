@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Health & Fitness Planner</title>
+<style>
+* { box-sizing: border-box; margin:0; padding:0; font-family:'Segoe UI', sans-serif; }
+body { background:#F9F6F2; color:#333; }
+header { background:#D3C4B0; color:#333; text-align:center; padding:20px; font-size:2rem; font-weight:bold; }
+nav { display:flex; flex-wrap:wrap; background:#E8DED3; border-bottom:1px solid #ccc; }
+nav button { flex:1; border:none; background:transparent; padding:15px 10px; cursor:pointer; font-size:1rem; transition:0.3s; }
+nav button.active, nav button:hover { background:#BFA48E; color:#fff; font-weight:bold; }
+.container { max-width:900px; margin:25px auto; background:white; padding:25px; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.1); }
+input, select, button, textarea { width:100%; margin-top:12px; padding:12px; font-size:1rem; border-radius:6px; border:1px solid #ccc; }
+button.primary { background:#BFA48E; color:white; border:none; border-radius:6px; cursor:pointer; transition:0.3s; }
+button.primary:hover { background:#A88C77; }
+textarea { height:150px; resize:none; background:#f9f9f9; }
+.hidden { display:none; }
+.plan-card { background:#fdfdfd; margin-bottom:15px; padding:15px; border-left:6px solid #BFA48E; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.05); }
+.plan-card h4 { margin-bottom:8px; color:#333; font-size:1.1rem; }
+.plan-card ul { list-style-type: disc; margin-left:20px; margin-bottom:10px; }
+.history-item { border-bottom:1px solid #eee; padding:10px 0; font-size:0.95rem; }
+.progress-list label { display:block; margin-bottom:8px; font-size:0.95rem; }
+.workout-img { width:80px; height:80px; object-fit:cover; border-radius:8px; margin-right:10px; }
+.flex-row { display:flex; align-items:center; margin-bottom:8px; }
+.pending { color: red; }
+.completed { color: green; font-weight: bold; }
+.task-box { margin-bottom: 10px; }
+.motivation { font-style:italic; color:#805E42; margin-bottom:8px; }
+</style>
+</head>
+<body>
+
+<header>AI Health & Fitness Planner</header>
+
+<nav>
+  <button class="active" onclick="switchTab('loginTab', this)">Login</button>
+  <button onclick="switchTab('planTab', this)">Planner</button>
+  <button onclick="switchTab('historyTab', this)">History</button>
+  <button onclick="switchTab('progressTab', this)">Progress</button>
+</nav>
+
+<!-- LOGIN / SIGNUP -->
+<div id="loginTab" class="container">
+  <h3>Login / Signup</h3>
+  <input type="text" id="name" placeholder="Name">
+  <input type="email" id="email" placeholder="Email">
+  <input type="password" id="password" placeholder="Password">
+  <button class="primary" onclick="login()">Login / Signup</button>
+  <p id="authStatus" style="margin-top:12px;color:#BFA48E;font-weight:bold;"></p>
+</div>
+
+<!-- PLAN GENERATION -->
+<div id="planTab" class="container hidden">
+  <h3>Generate Personalized Plan</h3>
+  <select id="goal">
+    <option value="">Select Goal</option>
+    <option value="Lose Weight">Lose Weight</option>
+    <option value="Gain Muscle">Gain Muscle</option>
+    <option value="Gain Weight">Gain Weight</option>
+  </select>
+  <select id="fitness_level">
+    <option>Beginner</option>
+    <option>Intermediate</option>
+    <option>Advanced</option>
+  </select>
+  <input type="number" id="workout_days" placeholder="Workout Days (1-7)">
+  <button class="primary" onclick="generatePlan()">Generate Plan</button>
+  <div id="planDisplay" style="margin-top:15px;"></div>
+</div>
+
+<!-- HISTORY -->
+<div id="historyTab" class="container hidden">
+  <h3>Your Past Plans</h3>
+  <div id="historyList"></div>
+</div>
+
+<!-- PROGRESS -->
+<div id="progressTab" class="container hidden">
+  <h3>Workout Progress</h3>
+  <div id="progressList"></div>
+  <p id="progressStatus" style="margin-top:12px;color:#BFA48E;font-weight:bold;"></p>
+</div>
+
+<script>
+// ======= Dummy login =======
+let userId=1;
+function login(){
+  document.getElementById('authStatus').innerText="Logged in successfully!";
+  switchTab('planTab', document.querySelectorAll('nav button')[1]);
+}
+
+// ======== Tabs ========
+function switchTab(tabId, btn){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.container').forEach(c=>c.classList.add('hidden'));
+  document.getElementById(tabId).classList.remove('hidden');
+  if(tabId==='historyTab') loadHistory();
+  if(tabId==='progressTab') loadProgress();
+}
+
+// ======== Meals ========
+const breakfastOptionsVeg = ["Oats","Eggs","Paneer Sandwich","Smoothie","Avocado Toast"];
+const breakfastOptionsNonVeg = ["Oats","Eggs","Chicken Omelette","Smoothie","Protein Shake"];
+const lunchOptionsVeg = ["Paneer Curry","Veg Biryani","Quinoa Salad","Rice & Dal","Vegetable Stir Fry"];
+const lunchOptionsNonVeg = ["Grilled Chicken","Salmon Salad","Chicken Stir Fry","Rice & Dal","Fish Curry"];
+const dinnerOptionsVeg = ["Paneer Tikka","Vegetable Soup","Pasta","Rice & Vegetables","Veg Curry"];
+const dinnerOptionsNonVeg = ["Grilled Fish","Chicken Soup","Salmon Curry","Rice & Vegetables","Chicken Curry"];
+
+function getRandomMeals(options,count=5){
+  let shuffled=[...options].sort(()=>0.5-Math.random());
+  return shuffled.slice(0,count);
+}
+
+// ======== Exercises & images ========
+const exercisesByGoal={
+  "Lose Weight":[["Jumping Jacks","Burpees","Squats","Lunges","Plank"],["Mountain Climbers","High Knees","Push Ups","Side Lunges","Sit Ups"]],
+  "Gain Muscle":[["Push Ups","Bench Press","Deadlift","Bicep Curl","Pull Ups"],["Squats","Lunges","Shoulder Press","Tricep Dips","Plank"]],
+  "Gain Weight":[["Squats","Deadlift","Bench Press","Lunges","Push Ups"],["Bicep Curl","Shoulder Press","Plank","Pull Ups","Sit Ups"]]
+};
+
+const exerciseImages = {
+"Jumping Jacks":"https://images.pexels.com/photos/414029/pexels-photo-414029.jpeg",
+"Burpees":"https://images.pexels.com/photos/4056723/pexels-photo-4056723.jpeg",
+"Squats":"https://images.pexels.com/photos/2261477/pexels-photo-2261477.jpeg",
+"Push Ups":"https://images.pexels.com/photos/1552249/pexels-photo-1552249.jpeg",
+"Lunges":"https://images.pexels.com/photos/4662437/pexels-photo-4662437.jpeg",
+"Plank":"https://images.pexels.com/photos/4662434/pexels-photo-4662434.jpeg",
+"Pull Ups":"https://images.pexels.com/photos/4776452/pexels-photo-4776452.jpeg",
+"Bench Press":"https://images.pexels.com/photos/416778/pexels-photo-416778.jpeg",
+"Deadlift":"https://images.pexels.com/photos/2261472/pexels-photo-2261472.jpeg",
+"Bicep Curl":"https://images.pexels.com/photos/2261485/pexels-photo-2261485.jpeg",
+"Shoulder Press":"https://images.pexels.com/photos/4765899/pexels-photo-4765899.jpeg",
+"Tricep Dips":"https://images.pexels.com/photos/4765891/pexels-photo-4765891.jpeg",
+"Sit Ups":"https://images.pexels.com/photos/4754772/pexels-photo-4754772.jpeg",
+"High Knees":"https://images.pexels.com/photos/414029/pexels-photo-414029.jpeg",
+"Side Lunges":"https://images.pexels.com/photos/4662438/pexels-photo-4662438.jpeg",
+"Mountain Climbers":"https://images.pexels.com/photos/4056720/pexels-photo-4056720.jpeg"
+};
+
+// ===== Motivation quotes =====
+const motivationQuotes = [
+  "Push your limits today!",
+  "Consistency is key!",
+  "Every step counts!",
+  "Stay strong and trust the process!",
+  "Your effort today shapes tomorrow!"
+];
+
+// ======== Generate Plan ========
+let currentPlan={};
+function generatePlan(){
+  const goal=document.getElementById('goal').value;
+  const days=parseInt(document.getElementById('workout_days').value);
+  if(!goal || !exercisesByGoal[goal]){ alert("Select a valid goal"); return; }
+  if(!days || days<1 || days>7){ alert("Enter days 1-7"); return; }
+
+  let plan={workout_plan:{},meal_plan:{},motivation:motivationQuotes[Math.floor(Math.random()*motivationQuotes.length)]};
+  for(let i=0;i<days;i++){
+    const day="Day "+(i+1);
+    const exercises=exercisesByGoal[goal][i%exercisesByGoal[goal].length];
+    plan.workout_plan[day]=exercises.map(ex=>({name:ex,reps_sets:"3x12",image:exerciseImages[ex]}));
+    plan.meal_plan[day]={
+      Breakfast:getRandomMeals(breakfastOptionsVeg.concat(breakfastOptionsNonVeg)),
+      Lunch:getRandomMeals(lunchOptionsVeg.concat(lunchOptionsNonVeg)),
+      Dinner:getRandomMeals(dinnerOptionsVeg.concat(dinnerOptionsNonVeg))
+    };
+  }
+  currentPlan=plan;
+  displayPlan(plan);
+}
+
+// ======== Display Plan ========
+function displayPlan(plan){
+  const display=document.getElementById('planDisplay'); display.innerHTML='';
+  // Motivation
+  display.innerHTML+=`<div class='plan-card motivation'>💡 ${plan.motivation}</div>`;
+  for(let day in plan.workout_plan){
+    const card=document.createElement('div'); card.className='plan-card';
+    let html=`<h4>${day} - Workout</h4>`;
+    plan.workout_plan[day].forEach(ex=>{
+      html+=`<div class="flex-row"><img src="${ex.image}" class="workout-img"><span><b>${ex.name}</b> - ${ex.reps_sets}</span></div>`;
+    });
+    card.innerHTML=html; display.appendChild(card);
+
+    const mealCard=document.createElement('div'); mealCard.className='plan-card';
+    let mealHtml=`<h4>${day} - Meals</h4>`;
+    for(let m in plan.meal_plan[day]){
+      mealHtml+=`<b>${m}:</b> ${plan.meal_plan[day][m].join(", ")}<br>`;
+    }
+    mealCard.innerHTML=mealHtml; display.appendChild(mealCard);
+  }
+}
+
+// ======== Dummy History & Progress ========
+function loadHistory(){ document.getElementById('historyList').innerHTML="History tab coming soon!"; }
+function loadProgress(){ 
+  const container=document.getElementById('progressList'); container.innerHTML='';
+  if(!currentPlan.workout_plan){ container.innerHTML="<p>Generate a plan first!</p>"; return; }
+  for(let day in currentPlan.workout_plan){
+    currentPlan.workout_plan[day].forEach(ex=>{
+      const div=document.createElement('div'); div.className='task-box';
+      div.innerHTML=`<label><input type="checkbox" class="progress-checkbox">${day} - ${ex.name}</label>`;
+      container.appendChild(div);
+    });
+  }
+  document.getElementById('progressStatus').innerText="Tick boxes as you complete exercises ✅";
+}
+</script>
+</body>
+</html>

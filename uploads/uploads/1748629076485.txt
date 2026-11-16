@@ -1,0 +1,21 @@
+DROP TABLE dbs13500102.employees;
+DROP TABLE dbs13500102.attendancereport;
+CREATE TABLE  dbs13500102.employees (
+    employee_id INT PRIMARY KEY AUTO_INCREMENT,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    department VARCHAR(50),
+    hire_date DATE
+);
+
+
+CREATE TABLE  dbs13500102.attendancereport (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    employee_id INT NOT NULL,
+    date DATE NOT NULL,
+    time_in TIME ,
+    status INT ,
+    time_out TIME ,
+    num_hr DOUBLE,
+    FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
+);

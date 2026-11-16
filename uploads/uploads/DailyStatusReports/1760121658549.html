@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Health & Fitness Planner</title>
+<style>
+* { box-sizing: border-box; margin:0; padding:0; font-family:'Segoe UI', sans-serif; }
+body { background:#F9F6F2; color:#333; }
+header { background:#D3C4B0; color:#333; text-align:center; padding:20px; font-size:2rem; font-weight:bold; }
+nav { display:flex; flex-wrap:wrap; background:#E8DED3; border-bottom:1px solid #ccc; }
+nav button { flex:1; border:none; background:transparent; padding:15px 10px; cursor:pointer; font-size:1rem; transition:0.3s; }
+nav button.active, nav button:hover { background:#BFA48E; color:#fff; font-weight:bold; }
+.container { max-width:900px; margin:25px auto; background:white; padding:25px; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.1); }
+input, select, button, textarea { width:100%; margin-top:12px; padding:12px; font-size:1rem; border-radius:6px; border:1px solid #ccc; }
+button.primary { background:#BFA48E; color:white; border:none; border-radius:6px; cursor:pointer; transition:0.3s; }
+button.primary:hover { background:#A88C77; }
+textarea { height:150px; resize:none; background:#f9f9f9; }
+.hidden { display:none; }
+.plan-card { background:#fdfdfd; margin-bottom:15px; padding:15px; border-left:6px solid #BFA48E; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.05); }
+.plan-card h4 { margin-bottom:8px; color:#333; font-size:1.1rem; }
+.plan-card ul { list-style-type: disc; margin-left:20px; margin-bottom:10px; }
+.history-item { border-bottom:1px solid #eee; padding:10px 0; font-size:0.95rem; }
+.progress-list label { display:block; margin-bottom:8px; font-size:0.95rem; }
+.flex-row { display:flex; align-items:center; margin-bottom:8px; }
+.pending { color: red; }
+.completed { color: green; font-weight: bold; }
+.task-box { margin-bottom: 10px; }
+.motivation { font-style:italic; color:#805E42; margin-bottom:8px; }
+.video-frame { width:100%; height:300px; margin-bottom:10px; border-radius:8px; }
+</style>
+</head>
+<body>
+
+<header>AI Health & Fitness Planner</header>
+
+<nav>
+  <button class="active" onclick="switchTab('profileTab', this)">Profile</button>
+  <button onclick="switchTab('plannerTab', this)">Planner</button>
+  <button onclick="switchTab('progressTab', this)">Progress</button>
+  <button onclick="switchTab('historyTab', this)">History</button>
+</nav>
+
+<!-- PROFILE -->
+<div id="profileTab" class="container">
+  <h3>Profile & BMI/Calories</h3>
+  <input type="text" id="name" placeholder="Name">
+  <input type="number" id="age" placeholder="Age">
+  <input type="number" id="height" placeholder="Height (cm)">
+  <input type="number" id="weight" placeholder="Weight (kg)">
+  <select id="goal">
+    <option value="">Select Goal</option>
+    <option value="Lose Weight">Lose Weight</option>
+    <option value="Gain Muscle">Gain Muscle</option>
+    <option value="Gain Weight">Gain Weight</option>
+    <option value="Maintain Weight">Maintain Weight</option>
+    <option value="Toning">Toning</option>
+    <option value="Flexibility">Flexibility</option>
+  </select>
+  <button class="primary" onclick="saveProfile()">Save Profile</button>
+  <p id="bmiCalorie" style="margin-top:12px;font-weight:bold;"></p>
+</div>
+
+<!-- PLANNER -->
+<div id="plannerTab" class="container hidden">
+  <h3>Generate Personalized Plan</h3>
+  <select id="workoutType">
+    <option value="">Workout Type</option>
+    <option value="Cardio">Cardio</option>
+    <option value="Strength">Strength</option>
+    <option value="Flexibility">Flexibility</option>
+  </select>
+  <select id="equipment">
+    <option value="">Equipment</option>
+    <option value="With Equipment">With Equipment</option>
+    <option value="Without Equipment">Without Equipment</option>
+  </select>
+  <input type="number" id="workout_days" placeholder="Number of Days (1-7)" value="7">
+  <button class="primary" onclick="generatePlan()">Generate Plan</button>
+  <div id="planDisplay" style="margin-top:15px;"></div>
+</div>
+
+<!-- PROGRESS -->
+<div id="progressTab" class="container hidden">
+  <h3>Workout Progress</h3>
+  <div id="progressList"></div>
+</div>
+
+<!-- HISTORY -->
+<div id="historyTab" class="container hidden">
+  <h3>Your Past Plans</h3>
+  <div id="historyList"></div>
+</div>
+
+<script>
+// ======= User =======
+let currentUser = 'defaultUser';
+
+// ====== Tabs ======
+function switchTab(tabId, btn){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.container').forEach(c=>c.classList.add('hidden'));
+  document.getElementById(tabId).classList.remove('hidden');
+  if(tabId==='progressTab') loadProgress();
+  if(tabId==='historyTab') loadHistory();
+}
+
+// ====== Profile ======
+function saveProfile(){
+  const profile={
+    name: document.getElementById('name').value,
+    age: document.getElementById('age').value,
+    height: parseFloat(document.getElementById('height').value),
+    weight: parseFloat(document.getElementById('weight').value),
+    goal: document.getElementById('goal').value
+  };
+  localStorage.setItem(currentUser+"_profile", JSON.stringify(profile));
+  if(profile.height && profile.weight){
+    const bmi=(profile.weight/((profile.height/100)**2)).toFixed(1);
+    let calories;
+    if(profile.goal==='Lose Weight') calories=(profile.weight*22).toFixed(0);
+    else if(profile.goal==='Gain Muscle'||profile.goal==='Gain Weight') calories=(profile.weight*30).toFixed(0);
+    else calories=(profile.weight*25).toFixed(0);
+    document.getElementById('bmiCalorie').innerText=`BMI: ${bmi}, Suggested Calories/day: ${calories}`;
+  }
+}
+
+// ====== Data ======
+const meals={
+  Breakfast:[
+    {name:"Oats with Milk",prep:"Mix oats with milk and cook 5 min"},
+    {name:"Veg Omelette",prep:"Whisk eggs with veggies and cook 3-4 min"},
+    {name:"Smoothie",prep:"Blend fruits with yogurt"},
+    {name:"Avocado Toast",prep:"Toast bread, add avocado"},
+    {name:"Protein Shake",prep:"Mix protein powder with milk"}
+  ],
+  Lunch:[
+    {name:"Grilled Chicken Salad",prep:"Grill chicken, toss with salad"},
+    {name:"Paneer Curry",prep:"Cook paneer with spices"},
+    {name:"Veg Biryani",prep:"Cook rice with vegetables"},
+    {name:"Quinoa Salad",prep:"Mix quinoa with veggies"},
+    {name:"Rice & Dal",prep:"Cook dal and rice"}
+  ],
+  Dinner:[
+    {name:"Salmon & Veggies",prep:"Bake salmon, serve with vegetables"},
+    {name:"Chicken Soup",prep:"Boil chicken with veggies"},
+    {name:"Vegetable Soup",prep:"Boil vegetables and blend lightly"},
+    {name:"Paneer Tikka",prep:"Grill paneer with spices"},
+    {name:"Pasta with Veg",prep:"Cook pasta and sauté vegetables"}
+  ]
+};
+
+const workoutsByGoal={
+  Cardio:{
+    "With Equipment":["Treadmill","Cross Trainer","Cycling","Rowing Machine","Elliptical Trainer"],
+    "Without Equipment":["Jumping Jacks","Burpees","High Knees","Mountain Climbers","Skater Jumps"]
+  },
+  Strength:{
+    "With Equipment":["Bench Press","Bicep Curl","Squats with Barbell","Deadlift","Shoulder Press"],
+    "Without Equipment":["Push Ups","Bodyweight Squats","Lunges","Plank","Tricep Dips"]
+  },
+  Flexibility:{
+    "With Equipment":["Resistance Band Stretch","Pilates Reformer","Cable Stretch","Leg Press Stretch","TRX Stretch"],
+    "Without Equipment":["Yoga Sun Salutation","Hamstring Stretch","Quadriceps Stretch","Shoulder Stretch","Cat-Cow Stretch"]
+  }
+};
+
+const workoutVideos={
+  "Treadmill":"https://www.youtube.com/embed/3vYy16gLt84",
+  "Cross Trainer":"https://www.youtube.com/embed/6bZw3W2m5iw",
+  "Cycling":"https://www.youtube.com/embed/2roX-Uz4z40",
+  "Rowing Machine":"https://www.youtube.com/embed/bGIk0ELd6BY",
+  "Elliptical Trainer":"https://www.youtube.com/embed/kbSvV3Ol0L0",
+  "Jumping Jacks":"https://www.youtube.com/embed/c4DAnQ6DtF8",
+  "Burpees":"https://www.youtube.com/embed/dZgVxmf6jkA",
+  "High Knees":"https://www.youtube.com/embed/OAJ_J3EZkdY",
+  "Mountain Climbers":"https://www.youtube.com/embed/cnyTQDSE884",
+  "Skater Jumps":"https://www.youtube.com/embed/7e9EC3HLP5M",
+  "Bench Press":"https://www.youtube.com/embed/SCVCLChPQFY",
+  "Bicep Curl":"https://www.youtube.com/embed/sAq_ocpRh_I",
+  "Squats with Barbell":"https://www.youtube.com/embed/ultWZbUMPL8",
+  "Deadlift":"https://www.youtube.com/embed/op9kVnSso6Q",
+  "Shoulder Press":"https://www.youtube.com/embed/B-aVuyhvLHU",
+  "Push Ups":"https://www.youtube.com/embed/_l3ySVKYVJ8",
+  "Bodyweight Squats":"https://www.youtube.com/embed/aclHkVaku9U",
+  "Lunges":"https://www.youtube.com/embed/QOVaHwm-Q6U",
+  "Plank":"https://www.youtube.com/embed/pSHjTRCQxIw",
+  "Tricep Dips":"https://www.youtube.com/embed/0326dy_-CzM",
+  "Resistance Band Stretch":"https://www.youtube.com/embed/8JJhD4wFj2Q",
+  "Pilates Reformer":"https://www.youtube.com/embed/ZyVYBvz8rKk",
+  "Cable Stretch":"https://www.youtube.com/embed/9T0ZJxv2_5U",
+  "Leg Press Stretch":"https://www.youtube.com/embed/ZsNefD9z7A0",
+  "TRX Stretch":"https://www.youtube.com/embed/lpC6rX3e1pE",
+  "Yoga Sun Salutation":"https://www.youtube.com/embed/73sL9swNssY",
+  "Hamstring Stretch":"https://www.youtube.com/embed/0hL1CAtN3lQ",
+  "Quadriceps Stretch":"https://www.youtube.com/embed/O5N-SbQhbGg",
+  "Shoulder Stretch":"https://www.youtube.com/embed/FBpXH7xuT4A",
+  "Cat-Cow Stretch":"https://www.youtube.com/embed/2iX9sqjQJLo"
+};
+
+const repsInfo={
+  "Treadmill":"20 min",
+  "Cross Trainer":"20 min",
+  "Cycling":"20 min",
+  "Rowing Machine":"15 min",
+  "Elliptical Trainer":"20 min",
+  "Jumping Jacks":"3x15",
+  "Burpees":"3x12",
+  "High Knees":"3x20 sec",
+  "Mountain Climbers":"3x20 sec",
+  "Skater Jumps":"3x15",
+  "Bench Press":"3x12",
+  "Bicep Curl":"3x12",
+  "Squats with Barbell":"3x15",
+  "Deadlift":"3x10",
+  "Shoulder Press":"3x12",
+  "Push Ups":"3x12",
+  "Bodyweight Squats":"3x15",
+  "Lunges":"3x12",
+  "Plank":"3x60 sec",
+  "Tricep Dips":"3x12",
+  "Resistance Band Stretch":"3x15",
+  "Pilates Reformer":"3x15",
+  "Cable Stretch":"3x15",
+  "Leg Press Stretch":"3x15",
+  "TRX Stretch":"3x15",
+  "Yoga Sun Salutation":"3x10",
+  "Hamstring Stretch":"3x15",
+  "Quadriceps Stretch":"3x15",
+  "Shoulder Stretch":"3x15",
+  "Cat-Cow Stretch":"3x10"
+};
+
+// ===== Helpers =====
+function shuffle(array,count){
+  let arr=[...array].sort(()=>Math.random()-0.5);
+  return arr.slice(0,count);
+}
+
+// ===== Generate Plan =====
+let currentPlan={};
+function generatePlan(){
+  if(!currentUser){ alert("Login first!"); return; }
+  const type=document.getElementById('workoutType').value;
+  const equip=document.getElementById('equipment').value;
+  const days=parseInt(document.getElementById('workout_days').value) || 7;
+  if(!type || !equip){ alert("Select workout type and equipment"); return; }
+  if(days<1 || days>7){ alert("Enter days 1-7"); return; }
+
+  let plan={workout_plan:{},meal_plan:{}};
+
+  for(let i=1;i<=days;i++){
+    const day="Day "+i;
+    const exercises=shuffle(workoutsByGoal[type][equip],5);
+    plan.workout_plan[day]=exercises.map(ex=>({name:ex,video:workoutVideos[ex],reps:repsInfo[ex]}));
+    plan.meal_plan[day]={
+      Breakfast:shuffle(meals.Breakfast,3),
+      Lunch:shuffle(meals.Lunch,3),
+      Dinner:shuffle(meals.Dinner,3)
+    };
+  }
+
+  currentPlan=plan;
+  localStorage.setItem(currentUser+"_plan",JSON.stringify(plan));
+  displayPlan(plan);
+  loadProgress();
+  loadHistory();
+}
+
+// ===== Display Plan =====
+function displayPlan(plan){
+  const display=document.getElementById('planDisplay'); display.innerHTML='';
+  for(let day in plan.workout_plan){
+    const card=document.createElement('div'); card.className='plan-card';
+    let html=`<h4>${day} - Workout</h4>`;
+    plan.workout_plan[day].forEach(ex=>{
+      html+=`<b>${ex.name}</b> - ${ex.reps}<br>`;
+      html+=`<iframe class="video-frame" src="${ex.video}" frameborder="0" allowfullscreen></iframe>`;
+    });
+    card.innerHTML=html; display.appendChild(card);
+
+    const mealCard=document.createElement('div'); mealCard.className='plan-card';
+    let mealHtml=`<h4>${day} - Meals</h4>`;
+    for(let m in plan.meal_plan[day]){
+      mealHtml+=`<b>${m}:</b><br>`;
+      plan.meal_plan[day][m].forEach(item=> mealHtml+=`${item.name} (${item.prep})<br>`);
+    }
+    mealCard.innerHTML=mealHtml; display.appendChild(mealCard);
+  }
+}
+
+// ===== Progress & History =====
+function loadProgress(){
+  const container=document.getElementById('progressList'); container.innerHTML='';
+  const prog=JSON.parse(localStorage.getItem(currentUser+"_progress"))||{};
+  if(!currentPlan.workout_plan){ container.innerHTML="<p>Generate a plan first!</p>"; return; }
+  for(let day in currentPlan.workout_plan){
+    currentPlan.workout_plan[day].forEach((ex,i)=>{
+      const div=document.createElement('div'); div.className='task-box';
+      const checked=(prog[day] && prog[day][i])? "checked":"";
+      div.innerHTML=`<label><input type="checkbox" data-index="${i}" data-day="${day}" class="progress-checkbox" ${checked} onchange="updateProgress(event)"> ${day} - ${ex.name}</label>`;
+      container.appendChild(div);
+    });
+  }
+}
+
+function updateProgress(e){
+  const day=e.target.dataset.day;
+  const idx=parseInt(e.target.dataset.index);
+  let prog=JSON.parse(localStorage.getItem(currentUser+"_progress"))||{};
+  if(!prog[day]) prog[day]={};
+  prog[day][idx]=e.target.checked;
+  localStorage.setItem(currentUser+"_progress",JSON.stringify(prog));
+}
+
+function loadHistory(){
+  const hist=document.getElementById('historyList'); hist.innerHTML='';
+  const prog=JSON.parse(localStorage.getItem(currentUser+"_progress"))||{};
+  for(let day in currentPlan.workout_plan){
+    const total=currentPlan.workout_plan[day].length;
+    const done=Object.values(prog[day]||{}).filter(v=>v).length;
+    const div=document.createElement('div');
+    div.className='plan-card';
+    div.innerHTML=`<b>${day}</b>: ${done}/${total} exercises done`;
+    hist.appendChild(div);
+  }
+}
+</script>
+</body>
+</html>
