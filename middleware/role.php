@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__.'/../modules/auth/self_profile.php';
 require_once __DIR__ . '/audit.php';
 require_once __DIR__ . '/../config/db.php';
 
@@ -57,5 +58,5 @@ function getEffectivePermission($resourceName)
         LEFT JOIN user_permissions up ON up.resource_id=r.id AND up.user_id=?
         WHERE r.resource_name=? AND r.status='Active' LIMIT 1";
     $stmt=$conn->prepare($sql);$stmt->bind_param('iis',$user['position_id'],$user['id'],$resourceName);$stmt->execute();
-    return $stmt->get_result()->fetch_assoc()?:[];
+    $result=$stmt->get_result()->fetch_assoc()?:[];return $resourceName==='profile'?selfProfilePermission($result):$result;
 }

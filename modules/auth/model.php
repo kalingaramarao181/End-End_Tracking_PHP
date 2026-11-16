@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__.'/self_profile.php';
 
 class AuthModel
 {
@@ -101,6 +102,7 @@ class AuthModel
                 'resource_type'=>$row['resource_type'],'parent_id'=>$row['parent_id'],'sort_order'=>(int)$row['sort_order'],
                 'permissions'=>$permissions,'scope'=>$row['data_scope']];
         }
+        $resources=selfProfileResources($resources);
         return ['user'=>['id'=>(int)$user['id'],'employee_id'=>(int)$user['employee_id'],'username'=>$user['nick_name'],
             'is_teamflow_candidate'=>(bool)$teamflow,'teamflow_candidate_id'=>$teamflow?(int)$teamflow['id']:null,'teamflow_photo_id'=>$teamflow&&!empty($teamflow['photo_id'])?(int)$teamflow['photo_id']:null,'display_name'=>$teamflow?trim($teamflow['firstname'].' '.$teamflow['lastname']):null,'email'=>$user['email'],'position_id'=>(int)$user['position_id'],'position'=>$user['position_name'],
             'status'=>$user['status'],'last_login'=>$user['last_login'],'super_admin'=>$isSuper],'resources'=>$resources];
